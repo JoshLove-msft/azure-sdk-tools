@@ -1,5 +1,6 @@
 ﻿using Azure.Sdk.Tools.TestProxy.Common;
 using System.Collections.Generic;
+using System.Text.RegularExpressions;
 
 namespace Azure.Sdk.Tools.TestProxy.Sanitizers
 {
@@ -13,6 +14,8 @@ namespace Azure.Sdk.Tools.TestProxy.Sanitizers
         private string _newValue;
         private string _regexValue = null;
         private string _groupForReplace = null;
+        private readonly string _inclusionValueRegex;
+        private readonly string _inclusionKey;
 
         /// <summary>
         /// Can be used for multiple purposes:
@@ -24,18 +27,45 @@ namespace Azure.Sdk.Tools.TestProxy.Sanitizers
         /// <param name="value">The substitution or whole new header value, depending on "regex" setting.</param>
         /// <param name="regex">A regex. Can be defined as a simple regex replace OR if groupForReplace is set, a subsitution operation.</param>
         /// <param name="groupForReplace">The capture group that needs to be operated upon. Do not set if you're invoking a simple replacement operation.</param>
-        public HeaderRegexSanitizer(string key, string value = "Sanitized", string regex = null, string groupForReplace = null)
+        /// <param name="inclusionKey">Optional header key that must be included in the request order for the sanitization to be performed.</param>
+        /// <param name="inclusionValueRegex">A regex pattern used to match on the value for the inclusion key.
+        /// If not set, any value for the inclusion key header is allowed.</param>
+        public HeaderRegexSanitizer(
+            string key,
+            string value = "Sanitized",
+            string regex = null,
+            string groupForReplace = null,
+            string inclusionKey = null,
+            string inclusionValueRegex = null)
         {
             _targetKey = key;
             _newValue = value;
             _regexValue = regex;
             _groupForReplace = groupForReplace;
+            _inclusionKey = inclusionKey;
+            _inclusionValueRegex = inclusionValueRegex;
         }
 
         public override void SanitizeHeaders(IDictionary<string, string[]> headers)
         {
             if (headers.ContainsKey(_targetKey))
             {
+                if (_inclusionKey != null)
+                {
+                    if (!headers.ContainsKey(_inclusionKey))
+                    {
+                        return;
+                    }
+
+                    if (_inclusionValueRegex != null)
+                    {
+                        Match match = Regex.Match(headers[_inclusionKey][0], _inclusionValueRegex);
+                        if (!match.Success)
+                        {
+                            return;
+                        }
+                    }
+                }
                 // Accessing 0th key safe due to the fact that we force header values in without splitting them on ;. 
                 // We do this because letting .NET split and then reassemble header values introduces a space into the header itself
                 // Ex: "application/json;odata=minimalmetadata" with .NET default header parsing becomes "application/json; odata=minimalmetadata"

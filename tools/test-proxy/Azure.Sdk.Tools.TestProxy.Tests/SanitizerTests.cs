@@ -208,6 +208,32 @@ namespace Azure.Sdk.Tools.TestProxy.Tests
         }
 
         [Fact]
+        public void HeaderRegexSanitizerSupportsConditionalSanitization()
+        {
+            var session = TestHelpers.LoadRecordSession("Test.RecordEntries/conditional_headers.json");
+            var targetKey = "Authorization";
+            var originalHeaderValue = "Sanitized";
+
+            var updatedHeaderValue = "updatedAuth";
+            var headerRegexSanitizer = new HeaderRegexSanitizer(
+                targetKey,
+                value: updatedHeaderValue,
+                inclusionKey: "User-Agent",
+                inclusionValueRegex: ".*conditional-header.*");
+            session.Session.Sanitize(headerRegexSanitizer);
+
+            // the first entry has the inclusion key, but the value doesn't match the regex, so the header value should be unchanged
+            Assert.Equal(originalHeaderValue, session.Session.Entries[0].Request.Headers[targetKey].First());
+
+            // the second entry does match, so the header value should be changed
+            Assert.Equal(updatedHeaderValue, session.Session.Entries[1].Request.Headers[targetKey].First());
+
+            // the third entry doesn't have the inclusion key, so the header value should be unchanged
+            Assert.Equal(originalHeaderValue, session.Session.Entries[2].Request.Headers[targetKey].First());
+
+        }
+
+        [Fact]
         public void BodyRegexSanitizerCleansJSON()
         {
             var session = TestHelpers.LoadRecordSession("Test.RecordEntries/post_delete_get_content.json");
