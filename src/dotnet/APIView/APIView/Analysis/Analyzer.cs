@@ -9,7 +9,7 @@ using System.Linq;
 
 namespace APIView.Analysis
 {
-    internal class Analyzer: SymbolVisitor
+    internal class Analyzer : SymbolVisitor
     {
         public List<CodeDiagnostic> Results { get; } = new List<CodeDiagnostic>();
 
@@ -20,6 +20,9 @@ namespace APIView.Analysis
             _analyzers.Add(new ClientMethodsAnalyzer());
             _analyzers.Add(new ClientConstructorAnalyzer());
             _analyzers.Add(new ClientOptionsAnalyzer());
+            _analyzers.Add(new ClientAssemblyNamespaceAnalyzer());
+            _analyzers.Add(new BannedAssembliesAnalyzer());
+            _analyzers.Add(new TypeNameAnalyzer());
         }
 
         public override void VisitAssembly(IAssemblySymbol symbol)

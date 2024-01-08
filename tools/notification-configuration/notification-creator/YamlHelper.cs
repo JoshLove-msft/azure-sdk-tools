@@ -1,15 +1,15 @@
-﻿using System;
+using System;
 using YamlDotNet.Serialization;
 using YamlDotNet.Serialization.NamingConventions;
 
-namespace NotificationConfiguration
+namespace Azure.Sdk.Tools.NotificationConfiguration
 {
     static class YamlHelper
     {
-        private static ISerializer serializer = 
+        private static readonly ISerializer serializer = 
             new SerializerBuilder().WithNamingConvention(new CamelCaseNamingConvention()).Build();
 
-        private static IDeserializer deserializer =
+        private static readonly IDeserializer deserializer =
             new DeserializerBuilder().WithNamingConvention(new CamelCaseNamingConvention()).Build();
 
 

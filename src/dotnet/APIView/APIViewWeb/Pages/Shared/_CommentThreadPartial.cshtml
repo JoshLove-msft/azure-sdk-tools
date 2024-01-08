@@ -1,15 +1,27 @@
-﻿@*
+@*
     For more information on enabling MVC for empty projects, visit http://go.microsoft.com/fwlink/?LinkID=397860
 *@
 @using APIViewWeb.Models
 @using System.Linq
 @model CommentThreadModel
+@{
+    var userPreference = TempData["UserPreference"] as UserPreferenceModel ?? new UserPreferenceModel(); ;
+}
 
 @if (Model != null && Model.Comments.Any())
 {
-    <tr class="comment-row" data-line-id="@Model.LineId">
-        <td class="comment-cell border-top border-bottom" colspan="4">
-            @if (Model.IsResolved)
+    var commentsDisplayState = (userPreference!.ShowComments == true || TempData["page"].Equals("conversation")) ? String.Empty : " d-none";
+    <tr class="comment-row @Model.LineClass@commentsDisplayState" data-line-id="@Model.LineId">
+        <td class="comment-cell border-top border-bottom" colspan="3">
+            <a class="comment-thread-anchor"></a>
+            @if (Model.IsResolved && Model.Comments.First().CreatedBy == User.GetGitHubLogin())
+            {
+                @:This thread is marked resolved by @Model.ResolvedBy <a href="#" class="toggle-comments">(show)</a>
+                <br />
+
+                <strong class="text-muted">You started this thread.</strong>
+            }
+            else if (Model.IsResolved)
             {
                 @:This thread is marked resolved by @Model.ResolvedBy <a href="#" class="toggle-comments">(show)</a>
             }
@@ -17,59 +29,59 @@
                 <div class="comment-thread-contents">
                     @foreach (var comment in Model.Comments)
                     {
-                        <div id="@comment.CommentId" class="review-comment">
-                            <div class="comment-actions">
-                                @if (comment.Username == User.GetGitHubLogin())
-                                {
-                                    <div class="dropdown show">
-                                        <a class="btn btn-sm" href="#" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
-                                            ...
-                                        </a>
-
-                                        <div class="dropdown-menu">
-                                            <form asp-controller="Comments" asp-action="Delete" method="post" asp-route-reviewId="@Model.ReviewId">
-                                                <input type="hidden" name="commentId" value="@comment.CommentId"/>
-                                                <button id="@comment.CommentId" data-post-update="comments" class="text-danger dropdown-item">Delete</button>
-                                            </form>
-                                        </div>
-                                    </div>
-                                }
-                            </div>
-                            <div class="media">
-                                <img username="@comment.Username" class="comment-icon align-self-start mr-3" height="28" width="28" />
-                                <div class="media-body comment-contents">
-                                    <div>
-                                        <strong class=" mt-0 comment-header author align-top">@comment.Username</strong>
-                                        <a date="@comment.TimeStamp.ToLocalTime()" href="#@comment.CommentId" class="small float-right"></a>
-                                    </div>
-                                    @Html.FormatAsMarkdown(@comment.Comment)
-                                </div>
-                            </div>
-                        </div>
+                        <partial name="_CommentThreadInnerPartial" model="comment" />
                     }
+                    <partial name="_CommentThreadReplyPartial" model="String.Empty" />
 
-                    <div class="review-thread-reply">
-                        <div class="reply-cell align-middle">
-                            <img avatar username="@User.GetGitHubLogin()" class="comment-icon" height="28" width="28" />
-                        </div>
-                        <div class="reply-cell col-12">
-                            <button type="button" class="review-thread-reply-button text-muted text-left form-control">Reply...</button>
-                        </div>
-                    </div>
-
-                    <div class="m-2">
+                    <div class="m-2 d-flex justify-content-between">
                         @if (Model.IsResolved)
                         {
-                            <form method="post" asp-controller="Comments" asp-action="Unresolve" asp-route-reviewId="@Model.ReviewId">
-                                <button data-post-update="comments" type="submit" name="submit" value="Submit" class="btn btn-outline-secondary">Unresolve</button>
-                            </form>
+                            @if(Model.Comments.First().ResolutionLocked)
+                            {
+                                <span asp-resource="@Model" asp-requirement="@ResolverRequirement.Instance">
+                                    <form data-post-update="comments" method="post" asp-controller="Comments" asp-action="Unresolve" asp-route-reviewId="@Model.ReviewId">
+                                        <button type="submit" name="submit" value="Submit" class="btn btn-outline-secondary">Unresolve</button>
+                                    </form>
+                                </span>
+                                <p>
+                                    &nbsp;&nbsp;Please ask
+                                    <a username="@Model.Comments.First().CreatedBy" class="font-weight-bolder mt-0">@Model.Comments.First().CreatedBy</a>
+                                    (or an APIView approver) to unresolve this conversation.
+                                </p>
+                            } 
+                            else 
+                            {
+                                <form data-post-update="comments" method="post" asp-controller="Comments" asp-action="Unresolve" asp-route-reviewId="@Model.ReviewId">
+                                    <button type="submit" name="submit" value="Submit" class="btn btn-outline-secondary">Unresolve</button>
+                                </form>
+                            }
                         }
                         else
                         {
-                            <form method="post" asp-controller="Comments" asp-action="Resolve"  asp-route-reviewId="@Model.ReviewId">
-                                <button data-post-update="comments" type="submit" name="submit" value="Submit" class="btn btn-outline-secondary">Resolve</button>
-                            </form>
+                            @if (Model.Comments.First().ResolutionLocked)
+                            {
+                                <span asp-resource="@Model" asp-requirement="@ResolverRequirement.Instance">
+                                    <form data-post-update="comments" method="post" asp-controller="Comments" asp-action="Resolve" asp-route-reviewId="@Model.ReviewId">
+                                        <button type="submit" name="submit" value="Submit" class="btn btn-outline-secondary">Resolve</button>
+                                    </form>
+                                </span>
+                                <p>
+                                    &nbsp;&nbsp;Please ask
+                                    <a username="@Model.Comments.First().CreatedBy" class="font-weight-bolder mt-0">@Model.Comments.First().CreatedBy</a>
+                                    (or an APIView approver) to resolve this conversation.
+                                </p>
+
+                            }
+                            else
+                            {
+                                <form data-post-update="comments" method="post" asp-controller="Comments" asp-action="Resolve" asp-route-reviewId="@Model.ReviewId">
+                                    <button type="submit" name="submit" value="Submit" class="btn btn-outline-secondary">Resolve</button>
+                                </form>
+                            }
                         }
+                        <div class="comment-navigation-buttons btn-group" role="group" aria-label="Navigation Between Comments">
+                            <!-- Navigation button are added via JavaScript-->
+                        </div>
                     </div>
                 </div>
             </div>

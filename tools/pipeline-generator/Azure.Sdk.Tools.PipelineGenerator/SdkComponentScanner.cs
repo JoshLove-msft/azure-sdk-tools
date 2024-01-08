@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 
 namespace PipelineGenerator
@@ -19,7 +20,9 @@ namespace PipelineGenerator
 
         public IEnumerable<SdkComponent> Scan(DirectoryInfo path, string searchPattern)
         {
-            Logger.LogDebug("Scanning directory '{0}' for components with search pattern '{1}'.", path.FullName, searchPattern);
+            string variantPattern = searchPattern.Replace(".yml", "\\.(?<variant>([a-z]+))\\.yml");
+            Regex variantExtractionExpression = new Regex($"^{variantPattern}$");
+            Logger.LogDebug($"Scanning directory '{path.FullName}' for components with search pattern '{searchPattern}' variant pattern '{variantPattern}'");
 
             if (!path.Exists)
             {
@@ -27,6 +30,7 @@ namespace PipelineGenerator
             }
 
             var pipelineYamlFiles = path.EnumerateFiles(searchPattern, SearchOption.AllDirectories);
+            pipelineYamlFiles = pipelineYamlFiles.Concat(path.EnumerateFiles(searchPattern.Replace(".yml", ".*.yml"), SearchOption.AllDirectories));
 
             if (pipelineYamlFiles.Count() == 0)
             {
@@ -49,6 +53,15 @@ namespace PipelineGenerator
                     Path = pipelineYamlFile.Directory,
                     RelativeYamlPath = relativePath
                 };
+
+                // Append variant information.
+                if (variantExtractionExpression.IsMatch(pipelineYamlFile.Name))
+                {
+                    var match = variantExtractionExpression.Match(pipelineYamlFile.Name);
+                    var variant = match.Groups["variant"].Value;
+                    component.Variant = variant;
+                    Logger.LogDebug($"variant = {variant}");
+                }
 
                 yield return component;
             }

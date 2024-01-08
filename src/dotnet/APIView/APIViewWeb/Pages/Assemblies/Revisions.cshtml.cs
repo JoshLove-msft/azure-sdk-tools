@@ -1,7 +1,11 @@
-﻿using System.Linq;
+using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
+using APIViewWeb.LeanModels;
+using APIViewWeb.Managers;
+using APIViewWeb.Managers.Interfaces;
 using APIViewWeb.Models;
-using APIViewWeb.Respositories;
+using APIViewWeb.Repositories;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
@@ -10,21 +14,41 @@ namespace APIViewWeb.Pages.Assemblies
 {
     public class RevisionsPageModel : PageModel
     {
-        private readonly ReviewManager _manager;
+        private readonly IReviewManager _reviewManager;
+        private readonly IAPIRevisionsManager _apiRevisionsManager;
+        public readonly UserPreferenceCache _preferenceCache;
 
         public RevisionsPageModel(
-            ReviewManager manager)
+            IReviewManager manager,
+            IAPIRevisionsManager reviewRevisionsManager,
+            UserPreferenceCache preferenceCache)
         {
-            _manager = manager;
+            _reviewManager = manager;
+            _apiRevisionsManager = reviewRevisionsManager;
+            _preferenceCache = preferenceCache;
         }
 
-        public ReviewModel Review { get; set; }
+        public ReviewListItemModel Review { get; set; }
+        public APIRevisionListItemModel LatestAPIRevision { get; set; }
+        public Dictionary<string, List<APIRevisionListItemModel>> APIRevisions { get; set; }
+
+        [FromForm]
+        public string Label { get; set; }
+
+        [FromForm]
+        public string FilePath { get; set; }
+
+        [FromForm]
+        public string Language { get; set; }
 
         public async Task<IActionResult> OnGetAsync(string id)
         {
             TempData["Page"] = "revisions";
 
-            Review = await _manager.GetReviewAsync(User, id);
+            Review = await _reviewManager.GetReviewAsync(User, id);
+            LatestAPIRevision = await _apiRevisionsManager.GetLatestAPIRevisionsAsync(Review.Id);
+            var revisions = await _apiRevisionsManager.GetAPIRevisionsAsync(Review.Id);
+            APIRevisions = revisions.GroupBy(r => r.APIRevisionType).ToDictionary(r => r.Key.ToString(), r => r.ToList());
 
             return Page();
         }
@@ -39,7 +63,11 @@ namespace APIViewWeb.Pages.Assemblies
             if (upload != null)
             {
                 var openReadStream = upload.OpenReadStream();
-                await _manager.AddRevisionAsync(User, id, upload.FileName, openReadStream);
+                await _apiRevisionsManager.AddAPIRevisionAsync(User, id, APIRevisionType.Manual, upload.FileName, Label, openReadStream, language: Language);
+            }
+            else
+            {
+                await _apiRevisionsManager.AddAPIRevisionAsync(User, id, APIRevisionType.Manual, FilePath, Label, null);
             }
 
             return RedirectToPage();
@@ -47,7 +75,14 @@ namespace APIViewWeb.Pages.Assemblies
 
         public async Task<IActionResult> OnPostDeleteAsync(string id, string revisionId)
         {
-            await _manager.DeleteRevisionAsync(User, id, revisionId);
+            await _apiRevisionsManager.SoftDeleteAPIRevisionAsync(User, id, revisionId);
+
+            return RedirectToPage();
+        }
+
+        public async Task<IActionResult> OnPostRenameAsync(string id, string revisionId, string newLabel)
+        {
+            await _apiRevisionsManager.UpdateAPIRevisionLabelAsync(User, revisionId, newLabel);
 
             return RedirectToPage();
         }

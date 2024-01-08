@@ -20,12 +20,21 @@ namespace PipelineGenerator.Conventions
 
         private const string ReportBuildStatusKey = "reportBuildStatus";
 
+        private Dictionary<string, BuildDefinitionReference> pipelineReferences;
+
         protected ILogger Logger { get; }
         protected PipelineGenerationContext Context { get; }
-
         public abstract string SearchPattern { get; }
+        public abstract string PipelineNameSuffix { get; }
+        public abstract string PipelineCategory { get; }
 
-        protected abstract string GetDefinitionName(SdkComponent component);
+        public string GetDefinitionName(SdkComponent component)
+        {
+            var baseName = component.Variant == null
+                            ? $"{Context.Prefix} - {component.Name}"
+                            : $"{Context.Prefix} - {component.Name} - {component.Variant}";
+            return baseName + PipelineNameSuffix;
+        }
 
         public async Task<BuildDefinition> DeleteDefinitionAsync(SdkComponent component, CancellationToken cancellationToken)
         {
@@ -79,12 +88,13 @@ namespace PipelineGenerator.Conventions
             Logger.LogDebug("Applying convention to '{0}' definition.", definitionName);
             var hasChanges = await ApplyConventionAsync(definition, component);
 
-            if (hasChanges)
+            if (hasChanges || Context.OverwriteTriggers)
             {
                 if (!Context.WhatIf)
                 {
                     Logger.LogInformation("Convention had changes, updating '{0}' definition.", definitionName);
                     var buildClient = await Context.GetBuildHttpClientAsync(cancellationToken);
+                    definition.Comment = "Updated by pipeline generation tool";
                     definition = await buildClient.UpdateDefinitionAsync(
                         definition: definition,
                         cancellationToken: cancellationToken
@@ -107,27 +117,32 @@ namespace PipelineGenerator.Conventions
         {
             Logger.LogDebug("Attempting to get existing definition '{0}'.", definitionName);
             var projectReference = await Context.GetProjectReferenceAsync(cancellationToken);
-            var sourceRepository = await Context.GetSourceRepositoryAsync(cancellationToken);
             var buildClient = await Context.GetBuildHttpClientAsync(cancellationToken);
-            var definitionReferences = await buildClient.GetDefinitionsAsync(
-                project: projectReference.Id,
-                name: definitionName,
-                path: Context.DevOpsPath,
-                repositoryId: sourceRepository.Id,
-                repositoryType: "github"
-                );
 
-            if (definitionReferences.Count() > 1)
+            if (pipelineReferences == default)
             {
-                Logger.LogError("More than one definition with name '{0}' found - this is an error!", definitionName);
+                var definitionReferences = await buildClient.GetDefinitionsAsync(
+                    project: projectReference.Id,
+                    path: Context.DevOpsPath
+                    );
 
-                foreach (var duplicationDefinitionReference in definitionReferences)
+                pipelineReferences = new Dictionary<string, BuildDefinitionReference>();
+                foreach (var definition in definitionReferences)
                 {
-                    Logger.LogDebug("Definition '{0}' at: {1}", definitionName, duplicationDefinitionReference.GetWebUrl());
+                    if (pipelineReferences.ContainsKey(definition.Name))
+                    {
+                        Logger.LogDebug($"Found more then one definition with name {definition.Name}, picking the first one {pipelineReferences[definition.Name].Id} and not {definition.Id}");
+                    }
+                    else
+                    {
+                        pipelineReferences.Add(definition.Name, definition);
+                    }
                 }
+                Logger.LogDebug($"Cached {definitionReferences.Count} pipelines.");
             }
 
-            var definitionReference = definitionReferences.SingleOrDefault();
+            BuildDefinitionReference definitionReference = null;
+            pipelineReferences.TryGetValue(definitionName, out definitionReference);
 
             if (definitionReference != null)
             {
@@ -147,19 +162,19 @@ namespace PipelineGenerator.Conventions
 
         private async Task<BuildDefinition> CreateDefinitionAsync(string definitionName, SdkComponent component, CancellationToken cancellationToken)
         {
+            var serviceEndpoint = await Context.GetServiceEndpointAsync(cancellationToken);
 
-            var sourceRepository = await Context.GetSourceRepositoryAsync(cancellationToken);
+            var repository = Context.Repository;
 
-            var buildRepository = new BuildRepository()
+            var buildRepository = new BuildRepository
             {
                 DefaultBranch = Context.Branch,
-                Id = sourceRepository.Id,
-                Name = sourceRepository.FullName,
+                Id = repository,
+                Name = repository,
                 Type = "GitHub",
-                Url = new Uri(sourceRepository.Properties["cloneUrl"]),
+                Url = new Uri($"https://github.com/{repository}.git"),
+                Properties = { ["connectedServiceId"] = serviceEndpoint.Id.ToString() }
             };
-
-            buildRepository.Properties.AddRangeIfRangeNotNull(sourceRepository.Properties);
 
             var projectReference = await Context.GetProjectReferenceAsync(cancellationToken);
             var agentPoolQueue = await Context.GetAgentPoolQueue(cancellationToken);
@@ -196,6 +211,52 @@ namespace PipelineGenerator.Conventions
             }
 
             return definition;
+        }
+
+        protected bool EnsureManagedVariables(BuildDefinition definition, SdkComponent component)
+        {
+            var hasChanges = false;
+
+            var managedVariables = new Dictionary<string, string>
+            {
+                { "meta.platform", this.Context.Prefix },
+                { "meta.component", component.Name },
+                { "meta.variant", component.Variant },
+                { "meta.category", this.PipelineCategory },
+                { "meta.autoGenerated", "true" },
+            };
+
+            foreach (var (key, value) in managedVariables)
+            {
+                if (string.IsNullOrEmpty(value))
+                {
+                    if (definition.Variables.ContainsKey(key))
+                    {
+                        Logger.LogInformation("Removing managed variable {Name}", key);
+                        definition.Variables.Remove(key);
+                        hasChanges = true;
+                    }
+
+                    // else: Nothing to do if an empty variable doesn't already exist.
+                    continue;
+                }
+
+                if (definition.Variables.TryGetValue(key, out var existingVariable))
+                {
+                    if (existingVariable.Value == value && !existingVariable.AllowOverride && !existingVariable.IsSecret)
+                    {
+                        // nothing to do if an existing variable matches the new value and options
+                        continue;
+                    }
+
+                    Logger.LogInformation("Overwriting managed variable {Name} from '{OriginalValue}' to '{NewValue}', not secret, not overridable", key, existingVariable.Value, value);
+                }
+
+                definition.Variables[key] = new BuildDefinitionVariable { Value = value, IsSecret = false, AllowOverride = false };
+                hasChanges = true;
+            }
+
+            return hasChanges;
         }
 
         protected bool EnsureVariableGroups(BuildDefinition definition)
@@ -241,26 +302,43 @@ namespace PipelineGenerator.Conventions
             return hasChanges;
         }
 
-        /// <summary>
-        /// Start hour (3AM)
-        /// </summary>
-        protected const int StartHourOffset = 3;
+        protected const int FirstSchedulingHour = 0;
+        protected const int LastSchedulingHour = 24;
+        protected const int TotalHours = LastSchedulingHour - FirstSchedulingHour;
+        protected const int TotalMinutes = TotalHours * 60;
+        protected const int BucketSizeInMinutes = 15;
+        protected const int TotalBuckets = TotalMinutes / BucketSizeInMinutes;
+        protected const int BucketsPerHour = 60 / BucketSizeInMinutes;
 
-        /// <summary>
-        /// Number of buckets for hour hashing
-        /// </summary>
-        protected const int HourBuckets = 3;
-
-        protected int HashBucket(string pipelineName)
+        protected virtual Schedule CreateScheduleFromDefinition(BuildDefinition definition)
         {
-            return pipelineName.GetHashCode() % HourBuckets;
+            var bucket = definition.Id % TotalBuckets;
+            var startHours = bucket / BucketsPerHour;
+            var startMinutes = bucket % BucketsPerHour;
+
+            var schedule = new Schedule
+            {
+                DaysToBuild = (ScheduleDays)31, // Schedule M-F
+                ScheduleOnlyWithChanges = true,
+                StartHours = FirstSchedulingHour + startHours,
+                StartMinutes = startMinutes * BucketSizeInMinutes,
+                TimeZoneId = "Pacific Standard Time",
+            };
+            schedule.BranchFilters.Add($"+{Context.Branch}");
+
+            return schedule;
         }
 
         protected virtual Task<bool> ApplyConventionAsync(BuildDefinition definition, SdkComponent component)
         {
-            bool hasChanges = true;
+            bool hasChanges = false;
 
             if (EnsureVariableGroups(definition))
+            {
+                hasChanges = true;
+            }
+
+            if (Context.SetManagedVariables && EnsureManagedVariables(definition, component))
             {
                 hasChanges = true;
             }
@@ -270,9 +348,9 @@ namespace PipelineGenerator.Conventions
                 hasChanges = true;
             }
 
-            if (definition.Path != $"\\{this.Context.DevOpsPath}")
+            if (definition.Path != this.Context.DevOpsPath)
             {
-                definition.Path = $"\\{this.Context.DevOpsPath}";
+                definition.Path = this.Context.DevOpsPath;
                 hasChanges = true;
             }
 
@@ -292,5 +370,131 @@ namespace PipelineGenerator.Conventions
 
             return Task.FromResult(hasChanges);
         }
+
+        protected bool EnsureDefaultPullRequestTrigger(BuildDefinition definition, bool overrideYaml = true, bool securePipeline = true)
+        {
+            bool hasChanges = false;
+            var prTriggers = definition.Triggers.OfType<PullRequestTrigger>();
+            if (prTriggers == default || !prTriggers.Any())
+            {
+                var newTrigger = new PullRequestTrigger();
+
+                if (overrideYaml)
+                {
+                    newTrigger.SettingsSourceType = 1; // Override what is in the yaml file and use what is in the pipeline definition
+                    newTrigger.BranchFilters.Add("+*");
+                }
+                else
+                {
+                    newTrigger.SettingsSourceType = 2; // Pull settings from yaml
+                }
+
+                newTrigger.Forks = new Forks
+                {
+                    AllowSecrets = securePipeline,
+                    Enabled = true
+                };
+
+                newTrigger.RequireCommentsForNonTeamMembersOnly = false;
+                newTrigger.IsCommentRequiredForPullRequest = securePipeline;
+
+                definition.Triggers.Add(newTrigger);
+                hasChanges = true;
+            }
+            else
+            {
+                foreach (var trigger in prTriggers)
+                {
+                    if (overrideYaml)
+                    {
+                        // Override what is in the yaml file and use what is in the pipeline definition
+                        if (trigger.SettingsSourceType != 1)
+                        {
+                            trigger.SettingsSourceType = 1;
+                            hasChanges = true;
+                        }
+
+                        // If any branch filters exist then overwrite them to the most generous filter.
+                        // The filter should support all branches because PR triggers with a yaml override
+                        // like this are expected to be manually invoked by `/azp run` comments, and these PRs
+                        // may be targeting development branches.
+                        if (!trigger.BranchFilters.SequenceEqual(new List<string>{"+*"}))
+                        {
+                            var filters = trigger.BranchFilters.Select(f => $"'{f}'");
+                            Logger.LogInformation($"Overwriting branch filters ({String.Join(", ", filters)}) for PR trigger with '+*'");
+                            trigger.BranchFilters.Clear();
+                            trigger.BranchFilters.Add("+*");
+                            hasChanges = true;
+                        }
+                    }
+                    else if (trigger.SettingsSourceType != 2)
+                    {
+                        // Pull settings from yaml
+                        trigger.SettingsSourceType = 2;
+                        hasChanges = true;
+                    }
+                    if (trigger.RequireCommentsForNonTeamMembersOnly != false ||
+                       trigger.Forks.AllowSecrets != securePipeline ||
+                       trigger.Forks.Enabled != true ||
+                       trigger.IsCommentRequiredForPullRequest != securePipeline
+                       )
+                    {
+                        trigger.Forks.AllowSecrets = securePipeline;
+                        trigger.Forks.Enabled = true;
+                        trigger.RequireCommentsForNonTeamMembersOnly = false;
+                        trigger.IsCommentRequiredForPullRequest = securePipeline;
+
+                        hasChanges = true;
+                    }
+                }
+            }
+            return hasChanges;
+        }
+
+        protected bool EnsureDefaultScheduledTrigger(BuildDefinition definition)
+        {
+            bool hasChanges = false;
+            var scheduleTriggers = definition.Triggers.OfType<ScheduleTrigger>();
+
+            // Only add the schedule trigger if one doesn't exist.
+            if (scheduleTriggers == default || !scheduleTriggers.Any() || Context.OverwriteTriggers)
+            {
+                var computedSchedule = CreateScheduleFromDefinition(definition);
+
+                definition.Triggers.RemoveAll(e => e is ScheduleTrigger);
+                definition.Triggers.Add(new ScheduleTrigger
+                {
+                    Schedules = new List<Schedule> { computedSchedule }
+                });
+
+                hasChanges = true;
+            }
+            return hasChanges;
+        }
+
+        protected bool EnsureDefaultCITrigger(BuildDefinition definition)
+        {
+            bool hasChanges = false;
+            var ciTrigger = definition.Triggers.OfType<ContinuousIntegrationTrigger>().SingleOrDefault();
+            if (ciTrigger == null || Context.OverwriteTriggers)
+            {
+                definition.Triggers.RemoveAll(e => e is ContinuousIntegrationTrigger);
+                definition.Triggers.Add(new ContinuousIntegrationTrigger()
+                {
+                    SettingsSourceType = 2 // Get CI trigger data from yaml file
+                });
+                hasChanges = true;
+            }
+            else
+            {
+                if (ciTrigger.SettingsSourceType != 2)
+                {
+                    ciTrigger.SettingsSourceType = 2;
+                    hasChanges = true;
+                }
+            }
+            return hasChanges;
+        }
     }
 }
+

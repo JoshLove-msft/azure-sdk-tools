@@ -3,74 +3,77 @@
 
 using System.Threading.Tasks;
 using Xunit;
+using Verifier = Azure.ClientSdk.Analyzers.Tests.AzureAnalyzerVerifier<Azure.ClientSdk.Analyzers.ClientAssemblyNamespaceAnalyzer>;
 
 namespace Azure.ClientSdk.Analyzers.Tests
 {
     public class AZC0001Tests
     {
-        private readonly DiagnosticAnalyzerRunner _runner = new DiagnosticAnalyzerRunner(new ClientAssemblyNamespaceAnalyzer());
-
         [Fact]
         public async Task AZC0001ProducedForInvalidNamespaces()
         {
-            var testSource = TestSource.Read(@"
-namespace /*MM*/RandomNamespace
+            const string code = @"
+namespace RandomNamespace
 {
     public class Program { }
-}
-");
-            var diagnostics = await _runner.GetDiagnosticsAsync(testSource.Source);
-            var diagnostic = Assert.Single(diagnostics);
-            Assert.Equal("AZC0001", diagnostic.Id);
-            Assert.Equal("Namespace 'RandomNamespace' shouldn't contain public types. Use one of the following pre-approved namespace groups: " +
-                         "Azure.ApplicationModel, Azure.Analytics, Azure.Data, Azure.Iot, Azure.Media, Azure.Messaging, Azure.ML, Azure.Security, Azure.Storage", diagnostic.GetMessage());
+}";
 
-            AnalyzerAssert.DiagnosticLocation(testSource.DefaultMarkerLocation, diagnostic.Location);
+            var diagnostic = Verifier.Diagnostic("AZC0001")
+                .WithMessage("Namespace 'RandomNamespace' shouldn't contain public types. Use one of the following pre-approved namespace groups (https://azure.github.io/azure-sdk/registered_namespaces.html):" +
+                             " Azure.AI, Azure.Analytics, Azure.Communication, Azure.Containers, Azure.Core.Expressions, Azure.Data, Azure.DigitalTwins, Azure.Identity, Azure.IoT, Azure.Learn, Azure.Management, Azure.Media, Azure.Messaging, Azure.MixedReality, Azure.Monitor, Azure.ResourceManager, Azure.Search, Azure.Security, Azure.Storage, Azure.Template, Microsoft.Extensions.Azure")
+                .WithSpan(2, 11, 2, 26);
+
+            await Verifier.VerifyAnalyzerAsync(code, diagnostic);
         }
 
         [Fact]
-        public async Task AZC0001ProducedOneErrorPerNamspaceDefinition()
+        public async Task AZC0001ProducedOneErrorPerNamespaceDefinition()
         {
-            var testSource = TestSource.Read(@"
-namespace RandomNamespace
+            const string code = @"
+namespace {|AZC0001:RandomNamespace|}
 {
     public class Program { }
 }
 
-namespace RandomNamespace
+namespace {|AZC0001:RandomNamespace|}
 {
     public class Program2 { }
-}
-");
-            var diagnostics = await _runner.GetDiagnosticsAsync(testSource.Source);
-            Assert.Equal(2, diagnostics.Length);
-            Assert.All(diagnostics, d => Assert.Equal("AZC0001", d.Id));
+}";
+            await Verifier.VerifyAnalyzerAsync(code);
         }
 
         [Fact]
         public async Task AZC0001NotProducedForNamespacesWithPrivateMembersOnly()
         {
-            var testSource = TestSource.Read(@"
+            const string code = @"
 namespace RandomNamespace
 {
     internal class Program { }
-}
-");
-            var diagnostics = await _runner.GetDiagnosticsAsync(testSource.Source);
-            Assert.Empty(diagnostics);
+}";
+            await Verifier.VerifyAnalyzerAsync(code);
         }
 
         [Fact]
         public async Task AZC0001NotProducedForAllowedNamespaces()
         {
-            var testSource = TestSource.Read(@"
+            const string code = @"
 namespace Azure.Storage.Hello
 {
     public class Program { }
-}
-");
-            var diagnostics = await _runner.GetDiagnosticsAsync(testSource.Source);
-            Assert.Empty(diagnostics);
+}";
+            await Verifier.VerifyAnalyzerAsync(code);
+        }
+
+        [Fact]
+        public async Task AZC0001AllowAzureCoreExpressions()
+        {
+            const string code = @"
+namespace Azure.Core.Expressions.Foobar
+{
+    public class Program { }
+}";
+
+            await Verifier.VerifyAnalyzerAsync(code);
         }
     }
 }

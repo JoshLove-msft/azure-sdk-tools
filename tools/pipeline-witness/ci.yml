@@ -1,0 +1,39 @@
+# NOTE: Please refer to https://aka.ms/azsdk/engsys/ci-yaml before editing this file.
+trigger:
+  branches:
+    include:
+      - main
+      - feature/*
+      - release/*
+      - hotfix/*
+  paths:
+    include:
+      - tools/pipeline-witness
+  
+pr:
+  branches:
+    include:
+      - main
+      - feature/*
+      - release/*
+      - hotfix/*
+  paths:
+    include:
+      - tools/pipeline-witness
+  
+extends:
+  template: ../../eng/pipelines/templates/stages/archetype-sdk-tool-azure-webapp.yml
+  parameters:
+    ToolName: pipeline-witness
+    ServiceProject: Azure.Sdk.Tools.PipelineWitness
+    TestProject: Azure.Sdk.Tools.PipelineWitness.Tests
+    Production:
+      EnvironmentName: pipelinewitnessprod
+      ResourceGroupName: pipelinewitnessprod
+      AzureSubscription: Azure SDK Engineering System
+      ResourceName: pipelinewitnessprod-app
+    Staging:
+      EnvironmentName: pipelinewitnessstaging
+      ResourceGroupName: pipelinewitnessstaging
+      AzureSubscription: Azure SDK Engineering System
+      ResourceName: pipelinewitnessstaging-app

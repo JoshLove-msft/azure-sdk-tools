@@ -1,14 +1,27 @@
 ﻿// Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
-using System.Text;
 using APIView;
+using System.Text;
+using System.Web;
 
 namespace ApiView
 {
-    public class CodeFileHtmlRenderer: CodeFileRenderer
+    public class CodeFileHtmlRenderer : CodeFileRenderer
     {
-        protected override void RenderToken(CodeFileToken token, StringBuilder stringBuilder)
+        private const string DOCUMENTATION_SPAN_START = "<span class=\"documentation\">";
+        private const string DOCUMENTATION_SPAN_END = "</span>";
+        private readonly bool _readOnly;
+
+        protected CodeFileHtmlRenderer(bool readOnly)
+        {
+            _readOnly = readOnly;
+        }
+
+        public static CodeFileHtmlRenderer Normal { get; } = new CodeFileHtmlRenderer(false);
+        public static CodeFileHtmlRenderer ReadOnly { get; } = new CodeFileHtmlRenderer(true);
+
+        protected override void RenderToken(CodeFileToken token, StringBuilder stringBuilder, bool isDeprecatedToken, bool isHiddenApiToken)
         {
             if (token.Value == null)
             {
@@ -20,7 +33,7 @@ namespace ApiView
 
             switch (token.Kind)
             {
-                case  CodeFileTokenKind.TypeName:
+                case CodeFileTokenKind.TypeName:
                     elementClass = "class";
                     break;
                 case CodeFileTokenKind.MemberName:
@@ -32,11 +45,24 @@ namespace ApiView
                 case CodeFileTokenKind.StringLiteral:
                     elementClass = "value";
                     break;
+                case CodeFileTokenKind.Comment:
+                    elementClass = "code-comment";
+                    break;
+            }
+
+            if (isDeprecatedToken)
+            {
+                elementClass += " deprecated";
+            }
+
+            if (isHiddenApiToken)
+            {
+                elementClass += " hidden-api";
             }
 
             string href = null;
 
-            if (token.DefinitionId != null)
+            if (token.DefinitionId != null && !_readOnly)
             {
                 elementClass += " commentable";
                 href = "#";
@@ -50,7 +76,7 @@ namespace ApiView
             if (!string.IsNullOrEmpty(elementClass))
             {
                 stringBuilder.Append("<");
-                var a = !string.IsNullOrEmpty(href);
+                var a = !_readOnly && !string.IsNullOrEmpty(href);
 
                 if (a)
                 {
@@ -61,13 +87,13 @@ namespace ApiView
                 {
                     stringBuilder.Append("span");
                 }
-                if (!string.IsNullOrEmpty(id))
+                if (!string.IsNullOrEmpty(id) && !_readOnly)
                 {
                     stringBuilder.Append(" id=\"").Append(id).Append("\"");
                 }
                 stringBuilder.Append(" class=\"").Append(elementClass).Append("\"");
                 stringBuilder.Append(">");
-                stringBuilder.Append(token.Value);
+                stringBuilder.Append(HttpUtility.HtmlEncode(token.Value));
 
                 if (a)
                 {
@@ -82,6 +108,15 @@ namespace ApiView
             {
                 stringBuilder.Append(EscapeHTML(token.Value));
             }
+        }
+
+        protected override void StartDocumentationRange(StringBuilder stringBuilder)
+        {
+            stringBuilder.Append(DOCUMENTATION_SPAN_START);
+        }
+        protected override void CloseDocumentationRange(StringBuilder stringBuilder) 
+        {
+            stringBuilder.Append(DOCUMENTATION_SPAN_END);
         }
 
         private string EscapeHTML(string word)

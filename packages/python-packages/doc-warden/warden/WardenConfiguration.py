@@ -26,7 +26,7 @@ class WardenConfiguration():
         },
         'net': { 
             'URL': 'https://www.nuget.org/packages/{package_id}/',
-            'Text': 'Nuget'
+            'Text': '![{package_id}](https://img.shields.io/nuget/vpre/{package_id}.svg)'
         }
     }
 
@@ -42,8 +42,14 @@ class WardenConfiguration():
             '-d',
             '--scan-directory',
             dest = 'scan_directory',
-            help = 'The repo directory that this tool should be scanning.',
+            help = 'The directory on a repo that this tool should be scanning.',
             required = True)
+        parser.add_argument(
+            '-u',
+            '--repo-root',
+            dest = 'repo_root',
+            help = 'The root of the repo',
+            required = False)
         parser.add_argument(
             '-c',
             '--config-location',
@@ -75,6 +81,20 @@ class WardenConfiguration():
             required = False,
             help = 'Enable or disable checking for a readme at the root of the repository. Defaults true. Overrides .docsettings contents.')
         parser.add_argument(
+            '-s',
+            '--pipeline-stage',
+            choices=['release', 'pr', 'ci'],
+            dest = 'pipeline_stage',
+            required = False,
+            help = 'Specify the stage of the pipeline. Used to provide conditional functionality depending on the stage of the pipeline')
+        parser.add_argument(
+            '-t',
+            '--target',
+            choices=['all','readme','changelog'],
+            dest = 'target',
+            required = False,
+            help = 'The file name to scan for; "`readme` or `changelog`" or specify `all` to scan for both. Will default to `readme`')
+        parser.add_argument(
             '-o',
             '--verbose-output',
             action="store_true",
@@ -89,8 +109,11 @@ class WardenConfiguration():
 
         self.command = args.command
         self.target_directory = args.scan_directory
-        self.yml_location = args.config_location or os.path.join(self.target_directory, '.docsettings.yml')
-        self.package_index_output_location = args.package_output_location or os.path.join(self.target_directory, 'packages.md')
+        self.repo_root = args.repo_root or self.target_directory
+        self.yml_location = args.config_location or os.path.join(self.repo_root, '.docsettings.yml')
+        self.package_index_output_location = args.package_output_location or os.path.join(self.repo_root, 'packages.md')
+        self.target = args.target or 'default'
+        self.target_files = []
 
         with open(self.yml_location, 'r') as f:
             try:
@@ -118,6 +141,8 @@ class WardenConfiguration():
         except:
             self.required_readme_sections = []
 
+        self.pipeline_stage = args.pipeline_stage or ''
+
         try:
             self.known_content_issues = doc['known_content_issues'] or []
         except:
@@ -134,6 +159,11 @@ class WardenConfiguration():
             print('.docsettings has no selected language, neither has the --scan-language parameter been populated. Exiting.')
             exit(1)
 
+        if self.target == 'changelog':
+            self.target_files = ['history.rst', 'history.md'] if self.scan_language == 'python' else ['changelog.md']
+        elif self.target == 'readme':
+            self.target_files = ['readme.rst', 'readme.md'] if self.scan_language == 'python' else ['readme.md']
+
         try:
             settings_file_root_check = doc['root_check_enabled']
         except:
@@ -149,19 +179,26 @@ class WardenConfiguration():
     # strips the directory up till the repo root. Allows us to easily think about 
     # relative paths instead of absolute on disk
     def get_output_path(self, input_path):
-        return input_path.replace(os.path.normpath(self.target_directory), '')
+        return input_path.replace(os.path.normpath(self.repo_root), '')
 
     def get_known_presence_issues(self):
-        return [os.path.normpath(os.path.join(self.target_directory, exception_tuple[0])) for exception_tuple in self.known_presence_issues]
+        known_issue_paths = []
+        for exception_tuple in self.known_presence_issues:
+            if any(exception_tuple[0].lower().endswith(target_file) for target_file in self.target_files):
+                known_issue_paths.append(os.path.normpath(os.path.join(self.repo_root, os.path.dirname(exception_tuple[0]))))
+            elif any(target_file.startswith('readme') for target_file in self.target_files):
+                known_issue_paths.append(os.path.normpath(os.path.join(self.repo_root, exception_tuple[0])))
+        return known_issue_paths
 
     def get_known_content_issues(self):
-        return [os.path.normpath(os.path.join(self.target_directory, exception_tuple[0])) for exception_tuple in self.known_content_issues]
+        known_issue_paths = []
+        for exception_tuple in self.known_content_issues:
+            if any(exception_tuple[0].lower().endswith(target_file) for target_file in self.target_files):
+                known_issue_paths.append(os.path.normpath(os.path.join(self.repo_root, exception_tuple[0])))
+        return known_issue_paths
 
     def get_package_indexing_traversal_stops(self):
-        return [os.path.normpath(os.path.join(self.target_directory, traversal_stop)) for traversal_stop in self.package_indexing_traversal_stops]
-
-    def get_readme_sections_dictionary(self):
-        return { key: i for i, key in enumerate(self.required_readme_sections) }
+        return [os.path.normpath(os.path.join(self.repo_root, traversal_stop)) for traversal_stop in self.package_indexing_traversal_stops]
 
     def get_repository_details(self):
         return WardenConfiguration.REPOSITORY_SETS[self.scan_language]
@@ -170,6 +207,7 @@ class WardenConfiguration():
         current_config = {
             'command': self.command,
             'target_directory': self.target_directory,
+            'repo_root': self.repo_root,
             'yml_location': self.yml_location,
             'omitted_paths': self.omitted_paths,
             'package_indexing_exclusion_list': self.package_indexing_exclusion_list,
@@ -177,6 +215,7 @@ class WardenConfiguration():
             'scan_language': self.scan_language,
             'root_check_enabled': self.root_check_enabled,
             'verbose_output': self.verbose_output,
+            'target_files' : self.target_files,
             'required_readme_sections': self.required_readme_sections,
             'known_content_issues': self.known_content_issues,
             'known_presence_issues': self.known_presence_issues

@@ -8,71 +8,28 @@ using System.Threading.Tasks;
 
 namespace PipelineGenerator.Conventions
 {
-    public class PullRequestValidationPipelineConvention : ContinuousIntegrationPipelineConvention
+    public class PullRequestValidationPipelineConvention : PipelineConvention
     {
         public PullRequestValidationPipelineConvention(ILogger logger, PipelineGenerationContext context) : base(logger, context)
         {
         }
 
-        protected override string GetDefinitionName(SdkComponent component)
-        {
-            return $"{Context.Prefix} - {component.Name} - ci";
-        }
-
         public override string SearchPattern => "ci.yml";
+        public override string PipelineNameSuffix => " - ci";
+        public override string PipelineCategory => "ci";
 
         protected override async Task<bool> ApplyConventionAsync(BuildDefinition definition, SdkComponent component)
         {
-            // NOTE: Not happy with this code at all, I'm going to look for a reasonable
-            // API that can do equality comparisons (without having to do all the checks myself).
-
             var hasChanges = await base.ApplyConventionAsync(definition, component);
 
-            var ciTrigger = definition.Triggers.OfType<ContinuousIntegrationTrigger>().SingleOrDefault();
-
-            if (ciTrigger == null)
+            if (EnsureDefaultPullRequestTrigger(definition, overrideYaml: false, securePipeline: false))
             {
-                definition.Triggers.Add(new ContinuousIntegrationTrigger()
-                {
-                    SettingsSourceType = 2 // HACK: This is editor invisible, but this is required to inherit branch filters from YAML file.
-                });
                 hasChanges = true;
             }
-            else
-            {
-                if (ciTrigger.SettingsSourceType != 2)
-                {
-                    ciTrigger.SettingsSourceType = 2;
-                    hasChanges = true;
-                }
-            }
 
-            var prTrigger = definition.Triggers.OfType<PullRequestTrigger>().SingleOrDefault();
-
-            if (prTrigger == null)
+            if (EnsureDefaultCITrigger(definition))
             {
-                // TODO: We should probably be more complete here.
-                definition.Triggers.Add(new PullRequestTrigger()
-                {
-                    SettingsSourceType = 2, // HACK: See above.
-                    Forks = new Forks()
-                    {
-                        AllowSecrets = false,
-                        Enabled = true
-                    }
-                });
                 hasChanges = true;
-            }
-            else
-            {
-                // TODO: We should probably be more complete here.
-                if (prTrigger.SettingsSourceType != 2 || prTrigger.Forks.AllowSecrets != false || prTrigger.Forks.Enabled != true)
-                {
-                    prTrigger.SettingsSourceType = 2;
-                    prTrigger.Forks.AllowSecrets = false;
-                    prTrigger.Forks.Enabled = true;
-                    hasChanges = true;
-                }
             }
 
             return hasChanges;

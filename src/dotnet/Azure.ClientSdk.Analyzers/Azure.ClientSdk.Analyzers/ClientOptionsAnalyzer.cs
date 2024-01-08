@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.Diagnostics;
+using System;
 using System.Collections.Immutable;
 using System.Linq;
 
@@ -10,14 +11,14 @@ namespace Azure.ClientSdk.Analyzers
     [DiagnosticAnalyzer(LanguageNames.CSharp)]
     public class ClientOptionsAnalyzer : SymbolAnalyzerBase
     {
-        protected const string ClientOptionsSuffix = "ClientOptions";
         protected const string ServiceVersionName = "ServiceVersion";
 
         public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics { get; } = ImmutableArray.Create(new[]
         {
             Descriptors.AZC0008,
             Descriptors.AZC0009,
-            Descriptors.AZC0010
+            Descriptors.AZC0010,
+            Descriptors.AZC0016,
         });
 
         public override SymbolKind[] SymbolKinds => new[] { SymbolKind.NamedType };
@@ -25,12 +26,10 @@ namespace Azure.ClientSdk.Analyzers
         public override void Analyze(ISymbolAnalysisContext symbolAnalysisContext)
         {
             var typeSymbol = (INamedTypeSymbol)symbolAnalysisContext.Symbol;
-            if (typeSymbol.TypeKind != TypeKind.Class || !typeSymbol.Name.EndsWith(ClientOptionsSuffix) || typeSymbol.DeclaredAccessibility != Accessibility.Public)
+            if (IsClientOptionsType(typeSymbol))
             {
-                return;
+                AnalyzeClientOptionsType(symbolAnalysisContext);
             }
-
-            AnalyzeClientOptionsType(symbolAnalysisContext);
         }
 
         private void AnalyzeClientOptionsType(ISymbolAnalysisContext context)
@@ -43,6 +42,18 @@ namespace Azure.ClientSdk.Analyzers
             {
                 context.ReportDiagnostic(Diagnostic.Create(Descriptors.AZC0008, typeSymbol.Locations.First()), typeSymbol);
                 return;
+            }
+
+            foreach (var serviceVersionMember in serviceVersionEnum.GetMembers().Where(member => member.Kind == SymbolKind.Field))
+            {
+                var parts = serviceVersionMember.Name.Split('_');
+                foreach (var part in parts)
+                {
+                    if (part.Length == 0 || !(char.IsDigit(part[0]) || char.IsUpper(part[0])))
+                    {
+                        context.ReportDiagnostic(Diagnostic.Create(Descriptors.AZC0016, serviceVersionMember.Locations.First()), serviceVersionMember);
+                    }
+                }
             }
 
             foreach (var constructor in typeSymbol.Constructors)
@@ -63,7 +74,7 @@ namespace Azure.ClientSdk.Analyzers
                     }
 
                     var maxVersion = serviceVersionEnum.GetMembers().Where(m => m.Kind == SymbolKind.Field).Max(m => ((IFieldSymbol)m).ConstantValue);
-                    if (!firstParam.HasExplicitDefaultValue || firstParam.ExplicitDefaultValue != maxVersion)
+                    if (!firstParam.HasExplicitDefaultValue || (int)firstParam.ExplicitDefaultValue != (int)maxVersion)
                     {
                         context.ReportDiagnostic(Diagnostic.Create(Descriptors.AZC0010, firstParam.Locations.First()), typeSymbol);
                     }

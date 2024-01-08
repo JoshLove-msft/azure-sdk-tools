@@ -3,57 +3,113 @@
 
 using System.Threading.Tasks;
 using Xunit;
+using Verifier = Azure.ClientSdk.Analyzers.Tests.AzureAnalyzerVerifier<Azure.ClientSdk.Analyzers.ClientConstructorAnalyzer>;
 
 namespace Azure.ClientSdk.Analyzers.Tests
 {
     public class AZC0006Tests
     {
-        private readonly DiagnosticAnalyzerRunner _runner = new DiagnosticAnalyzerRunner(new ClientConstructorAnalyzer());
-
         [Fact]
         public async Task AZC0006ProducedForClientsWithoutOptionsCtor()
         {
-            var testSource = TestSource.Read(@"
+            const string code = @"
 namespace RandomNamespace
 {
-    public class SomeClientOptions { }
+    public class SomeClientOptions : Azure.Core.ClientOptions { }
 
     public class SomeClient
     {
         protected SomeClient() {}
-        public /*MM*/SomeClient(SomeClientOptions options) {}
+        public {|AZC0006:SomeClient|}(SomeClientOptions options) {}
     }
-}
-");
-            var diagnostics = await _runner.GetDiagnosticsAsync(testSource.Source);
-
-            var diagnostic = Assert.Single(diagnostics);
-
-            Assert.Equal("AZC0006", diagnostic.Id);
-            AnalyzerAssert.DiagnosticLocation(testSource.DefaultMarkerLocation, diagnostics[0].Location);
+}";
+            await Verifier.VerifyAnalyzerAsync(code);
         }
 
         [Fact]
         public async Task AZC0006ProducedForClientsWithoutOptionsCtorWithArguments()
         {
-            var testSource = TestSource.Read(@"
+            const string code = @"
 namespace RandomNamespace
 {
-    public class SomeClientOptions { }
+    public class SomeClientOptions : Azure.Core.ClientOptions { }
 
     public class SomeClient
     {
         protected SomeClient() {}
-        public /*MM*/SomeClient(string connectionString, SomeClientOptions options) {}
+        public {|AZC0006:SomeClient|}(string connectionString, SomeClientOptions options) {}
     }
-}
-");
-            var diagnostics = await _runner.GetDiagnosticsAsync(testSource.Source);
+}";
+            await Verifier.VerifyAnalyzerAsync(code);
+        }
 
-            var diagnostic = Assert.Single(diagnostics);
+        [Fact]
+        public async Task AZC0006NotProducedForClientsWithoutOptionsCtorWithArguments()
+        {
+            const string code = @"
+namespace RandomNamespace
+{
+    public class SomeClientOptions : Azure.Core.ClientOptions { }
 
-            Assert.Equal("AZC0006", diagnostic.Id);
-            AnalyzerAssert.DiagnosticLocation(testSource.DefaultMarkerLocation, diagnostics[0].Location);
+    public class SomeClient
+    {
+        protected SomeClient() {}
+        public SomeClient(string connectionString, SomeClientOptions options = null) {}
+    }
+}";
+            await Verifier.VerifyAnalyzerAsync(code);
+        }
+
+        [Fact]
+        public async Task AZC0006NotProducedForSharedClientOptions()
+        {
+            const string code = @"
+namespace RandomNamespace
+{
+    public class SharedClientOptions : Azure.Core.ClientOptions { }
+
+    public class SomeClient
+    {
+        protected SomeClient() {}
+        public SomeClient(string connectionString, SharedClientOptions options = null) {}
+    }
+}";
+            await Verifier.VerifyAnalyzerAsync(code);
+        }
+
+        [Fact]
+        public async Task AZC0006NotProducedForClientsOptions()
+        {
+            const string code = @"
+namespace RandomNamespace
+{
+    public class SomeClientsOptions : Azure.Core.ClientOptions { } // Type has 'ClientsOptions' suffix instead of 'ClientOptions'
+
+    public class SomeClient
+    {
+        protected SomeClient() {}
+        public SomeClient(string connectionString, SomeClientsOptions options = null) {}
+    }
+}";
+            await Verifier.VerifyAnalyzerAsync(code);
+        }
+
+        [Fact]
+        public async Task AZC0006NotProducedForClientsWithStaticProperties()
+        {
+            const string code = @"
+namespace RandomNamespace
+{
+    public class SomeClientOptions : Azure.Core.ClientOptions { }
+
+    public class SomeClient
+    {
+        public static int a = 1;
+        public SomeClient() {}
+        public SomeClient(SomeClientOptions options) {}
+    }
+}";
+            await Verifier.VerifyAnalyzerAsync(code);
         }
     }
 }

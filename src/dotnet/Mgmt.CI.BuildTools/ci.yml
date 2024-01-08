@@ -1,20 +1,21 @@
-# External variables:
-# ProjectFile - The project to build and test. This variable is defined in pipeline web ui because we want to be able to provide it at queue time and that isn't supported in yaml yet.
-# VersioningProps - A collection of extra msbuild versioning properties like OfficialBuildId, PreReleaseVersionLabel, and DotNetFinalVersionKind
+# NOTE: Please refer to https://aka.ms/azsdk/engsys/ci-yaml before editing this file.
 
 trigger:
-  - master
+  - main
 
 resources:
   repositories:
     - repository: azure-sdk-build-tools
       type: git
       name: internal/azure-sdk-build-tools
+      ref: refs/tags/azure-sdk-build-tools_20230829.1
 
 variables:
-  DotNetCoreVersion: '2.1.503'
-  ProjectFile: mgmtci.proj
-  BlobFeedUrl: https://azuresdkartifacts.blob.core.windows.net/azure-sdk-tools/index.json
+  - template: /eng/pipelines/templates/variables/globals.yml
+  - name: ProjectFile
+    value: mgmtci.proj
+  - name: BlobFeedUrl
+    value: https://azuresdkartifacts.blob.core.windows.net/azure-sdk-tools/index.json
 
 stages:
   - stage: Build
@@ -22,13 +23,10 @@ stages:
       - job: 'Build'
 
         pool:
-          vmImage: 'vs2017-win2016'
+          vmImage: 'windows-2022'
 
         steps:
-          - task: DotNetCoreInstaller@0
-            displayName: 'Use .NET Core sdk $(DotNetCoreVersion)'
-            inputs:
-              version: '$(DotNetCoreVersion)'
+          - template: /eng/pipelines/templates/steps/install-dotnet.yml
 
           - script: 'dotnet pack $(ProjectFile) -o $(Build.ArtifactStagingDirectory) -warnaserror $(VersioningProps)'
             displayName: 'Build and Package'
@@ -43,7 +41,7 @@ stages:
             inputs:
               ArtifactName: packages
   - ${{ if ne(variables['System.TeamProject'], 'Public') }}:
-    - template: pipelines/stages/net-release-blobfeed.yml@azure-sdk-build-tools
+    - template: pipelines/stages/net-release-to-feed.yml@azure-sdk-build-tools
       parameters:
         ShouldTag: false  # Disable tagging for now as github is rate limiting us
         ShouldSign: false # Disable signing for now because the tools package contains a number files we cannot correctly sign

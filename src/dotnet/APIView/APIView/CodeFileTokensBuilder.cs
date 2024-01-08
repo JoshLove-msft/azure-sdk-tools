@@ -1,9 +1,9 @@
 ﻿// Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
-using System.Collections.Generic;
 using APIView;
 using Microsoft.CodeAnalysis.CSharp;
+using System.Collections.Generic;
 
 namespace ApiView
 {
@@ -43,6 +43,11 @@ namespace ApiView
             Append(SyntaxFacts.GetText(syntaxKind), CodeFileTokenKind.Punctuation);
         }
 
+        public void Punctuation(string s)
+        {
+            Append(s, CodeFileTokenKind.Punctuation);
+        }
+
         public void NewLine()
         {
             Append(new CodeFileToken(null, CodeFileTokenKind.Newline));
@@ -61,6 +66,16 @@ namespace ApiView
         public void Space()
         {
             Append(" ", CodeFileTokenKind.Whitespace);
+        }
+
+        public void Text(string text)
+        {
+            Append(text, CodeFileTokenKind.Text);
+        }
+
+        public void Comment(string text)
+        {
+            Append(text, CodeFileTokenKind.Comment);
         }
     }
 }

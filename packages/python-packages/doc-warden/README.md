@@ -1,4 +1,4 @@
-# Doc Warden [![Build Status](https://dev.azure.com/azure-sdk/public/_apis/build/status/108?branchName=master)](https://dev.azure.com/azure-sdk/public/_build/latest?definitionId=108&branchName=master)
+# Doc Warden [![Build Status](https://dev.azure.com/azure-sdk/public/_apis/build/status/108?branchName=main)](https://dev.azure.com/azure-sdk/public/_build/latest?definitionId=108&branchName=main)
 
 Every CI build owned by the Azure-SDK team also needs to verify that the documentation within the target repo meets a set of standards. `Doc-warden` is intended to ease the _implementation_ of these checks in CI builds.
 
@@ -6,10 +6,13 @@ Features:
 
 * Enforces Readme Standards
     - Readmes present
-    - Readmes have appropriate contents
+    - Readmes have appropriate content
+* Enforces Changelog Standards
+    - Changelogs Present
+    - Changelogs contain entry and content for the latest package version
 * Generates report for included observed packages
 
-This package is tested on Python 2.7 -> 3.8.
+This package is tested on Python 3.4 -> 3.8. This package went python3-only starting with `0.7.0`.
 
 ## Prerequisites
 This package is intended to be run as part of a pipeline within Azure DevOps. As such, [Python](https://www.python.org/downloads/) must be installed prior to attempting to install or use `Doc-Warden.` While `pip` comes pre-installed on most modern Python installs, if `pip` is an unrecognized command when attempting to install `warden`, run the following command **after** your Python installation is complete.
@@ -23,7 +26,7 @@ In addition, `warden` is distributed using `setuptools` and `wheel`, so those pa
 
 ## Usage
 
-Right now, `warden` supports two main purposes. Readme enforcement (`scan`, `content`, `presence`) and package indexing (`index`).  
+Right now, `warden` supports two main purposes. 1. Readme and Changelog enforcement (`scan`, `content`, `presence`), and 2. package indexing (`index`).  
 
 ### Example usage (for any of the above commands):
 
@@ -58,20 +61,31 @@ Currently supports 3 commands. Values: `['scan', 'presence', 'content', `index`]
 * `scan`
     * Run both `content` and `presence` enforcement on the targeted directory.
 * `content`
-    * Run only `content` readme enforcement on the target directory. Ensures content in each matches the regex patterns defined in the .docsettings file.
+    * Run only `content` enforcement on the target directory. Ensures that:
+      - The content in each readme matches the regex patterns defined in the .docsettings file
+      - Each changelog contains entry for the latest version.
 * `presence` 
-    * Run only `presence` readme enforcement on the target directory. Ensures readmes exist where they should.
+    * Run only `presence` enforcement on the target directory. Ensures readmes and changelogs exist where they should.
 * `index`
     * Take inventory of the target folder. Attempts to leverage selected docsettings to discover all packages within the directory, and generate a `packages.md` index file.
 
 `--scan-directory`
 The target directory `warden` should be scanning. **Required.**
 
+`--repo-root`
+The root of the repo. Entries in the config-file should be relative to this directory. **Optional.**
+
 `--scan-language`
-`warden` checks for packages by _convention_, so it needs to understand what language it is looking at. This must be populated either in `.docsettings file` or by parameter. **Required.**
+`warden` checks for packages by _convention_, so it needs to understand what language it is looking at. This must be populated either in `.docsettings file` or by parameter. **Optional.**
 
 `--config-location`
 By default, `warden` looks for the `.docsettings` file in the root of the repository. However, populating this location will override this behavior and instead pull the file from the location in this parameter. **Optional.**
+
+`--pipeline-stage`
+The stage of the pipeline. can be `pr`, `ci`, or `release`. **Optional.**
+
+`--target`
+Specify what file to run enforcement on `readme` or `changelog`. Used when running `content` or `presence` verification only. **Optional.**
 
 `--package-output`
 Override the default location that the generated `packages.md` file is dropped to during execution of the `index` command.
@@ -87,18 +101,18 @@ The `-d` argument should be `$(Build.SourcesDirectory)`. This will point `warden
 
 ### Enforcing Readme Presence 
 
-When should we expect a readme to be present?
+When should we expect a readme and/or changelog to be present?
 
 **Always:**
 
-* At the root of the repo
-* Associated with a `package` directory
+* At the root of the repo (Readme only)
+* Associated with a `package` directory (Readme and Changelog)
 
-#### .Net
+#### .NET
 
 A package directory is indicated by:
 
-* a `*,csproj` file under the `sdk` directory
+* a `*.csproj` file under the `sdk` directory
     * Note that this is just a proxy. `warden` attempts to omit test projects by convention.
 
 
@@ -128,7 +142,11 @@ A package directory is indicated by:
 Other Notes:
 
 * A `section` header is any markdown or RST that will result in a `<h1>` to `<h2>` html tag.
-* `warden` will content verify any `readme.rst` or `readme.md` file found outside the `omitted_paths` in the targeted repo. 
+* `warden` will content verify any `readme.rst` or `readme.md` file found outside the `omitted_paths` in the targeted repo.
+
+### Enforcing Changelog Content
+`doc-warden` checks the latest entry in the changelog file to make sure it matches the latest version of the package. It also checks to make sure that the entry is not empty. 
+
 
 #### Control, the `.docsettings.yml` File, and You
 
@@ -152,31 +170,42 @@ The presence of this file allows each repository to customize how enforcement ta
 ```
 omitted_paths:
   - archive/*
+  - sdk/eventhub/
 language: java
 root_check_enabled: True
 required_readme_sections:
   - "(Client Library for Azure .*|Microsoft Azure SDK for .*)"
   - Getting Started
+    - Install Package
+    - Prerequisites
+    - Authenticate the Client
 known_presence_issues:
-  - ['cognitiveservices/data-plane/language/bingspellcheck', '#2847']
+  - ['cognitiveservices/data-plane/language/bingspellcheck/README.md', '#2847']
+  - ['cognitiveservices/data-plane/language/bingspellcheck/CHANGELOG.md', '#2847']
 known_content_issues:
   - ['sdk/template/azure-sdk-template/README.md','#1368']
+  - ['sdk/template/azure-sdk-template/CHANGELOG.md','#1368']
 ```
-
 The above configuration tells `warden`...
 
 - The language within the repo is `java`
 - To ensure that a `README.md` is present at the root of the repository.
-- To omit any paths under `archive/` from the readme checks.
+- To omit **any** paths under `archive/` from the readme checks.
+- To omit paths found **directly** under `sdk/eventhub/`. 
+   - This means that if there is a readme content issue under `sdk/eventhub/azure-messaging/`, it will still throw an error!
 
 Possible values for `language` right now are `['net', 'java', 'js', 'python']`. Greater than one target language is not currently supported.
 
 ##### `required_readme_sections` Configuration
-This section instructs `warden` to verify that there is at least one matching section title for each provided `section` pattern in any discovered readme. Regex is fully supported.
+This section instructs `warden` to verify that there is at least one matching section title for each provided `section` pattern in any discovered readme. Notice that **nested** specifications are supported. Regex is fully supported.
 
 The two items listed from the example `.docsettings` file will:
+
 - Match a header matched by a simple regex expression
 - Match a header exactly titled "Getting Started"
+      - Under the header "Getting Started" validate that 3 additional headings are present.
+      - `doc-warden` will search up to the next header of equivalent importantance for the sub-headings. 
+        - This means that when searching under header `# Getting Started`, doc-warden will scan up to the next `H1` header.
 
 Note that the regex is surrounded by quotation marks where the regex will break `yml` parsing of the configuration file.
 
@@ -195,14 +224,14 @@ the `package_indexing_exclusion_list` array members to enable just this sort of 
 
 `package_indexing_traversal_stops` is used during parse of .NET language repos _only_. This is due to how the discovery logic for readme and changelog is implemented for .NET projects. Specifically, readmes for a .csproj are often a couple directories up from their parent .csproj location!
 
-For .net, `warden` will traverse **up** one directory at a time, looking for the readme and changelog files in each traversed directory. `warden` will continue to traverse until...
+For .NET, `warden` will traverse **up** one directory at a time, looking for the readme and changelog files in each traversed directory. `warden` will continue to traverse until...
 
 1. It discovers a folder with a `.sln` within it
 2. It encounters a folder that exactly matches one present in `package_indexing_traversal_stops`
 
 Note that `warden` will not even execute an index against a .NET repo _unless the traversal stops are set_. 
 
-[SDK for net .docsettings](https://github.com/Azure/azure-sdk-for-net/blob/master/eng/.docsettings.yml) is a great example for both the exclusion list as well as the traversal stops.
+[SDK for net .docsettings](https://github.com/Azure/azure-sdk-for-net/blob/main/eng/.docsettings.yml) is a great example for both the exclusion list as well as the traversal stops.
 
 ## Provide Feedback
 
