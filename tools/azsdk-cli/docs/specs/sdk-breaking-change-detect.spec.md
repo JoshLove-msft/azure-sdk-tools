@@ -333,6 +333,12 @@ configured detector separately from its build/changelog steps, preserves its
 report artifact, and propagates its breaking-change result through the existing
 reporting and suppression flow.
 
+The .NET SDK PR pipeline also collects the native contract after Release
+packaging, independently of other failed gates, and publishes per-package raw
+reports or explicit detector errors. Its final gate enforces `hasBreakingChange`;
+successful extraction alone is not a compatibility pass. Collected successful
+reports can be replayed through the common tool for classification and mitigation.
+
 ##### Common input and output
 
 **Input**:
