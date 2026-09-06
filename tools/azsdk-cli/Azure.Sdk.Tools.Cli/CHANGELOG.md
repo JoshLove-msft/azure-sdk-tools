@@ -8,6 +8,8 @@
 
 ### Bugs Fixed
 
+- C# customized-code updates now regenerate the SDK after patching customizations and before the final build.
+
 ### Other Changes
 
 ## 0.6.43 (2026-09-03)
