@@ -49,6 +49,7 @@ export type SwaggerToSdkConfig = {
         }
       | false;
     buildScript?: RunOptions;
+    getSdkChangesScript?: RunOptions;
     changelogScript?: RunOptions & {
       breakingChangeDetect?: RunLogFilterOptions;
     };

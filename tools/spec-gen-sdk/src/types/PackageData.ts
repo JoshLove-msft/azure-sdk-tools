@@ -5,6 +5,8 @@ import { repoKeyToString } from '../utils/repo';
 import { SDKAutomationState } from '../automation/sdkAutomationState';
 import { parseSemverVersionString } from '../utils/parseSemverVersionString';
 import { getSuppressionLines, SDKSuppressionContentList } from '../utils/handleSuppressionLines';
+import { SdkChanges } from './SdkChanges';
+import { SdkSuppressionsYml } from './sdkSuppressions';
 
 /**
  * The data that describes an SDK repository package.
@@ -112,6 +114,9 @@ export type PackageData = SDKRepositoryPackageData & {
   language?: string;
   changelogs: string[];
   breakingChangeItems?: string[];
+  sdkChanges?: SdkChanges;
+  sdkChangesArtifactPath?: string;
+  sdkSuppressions?: SdkSuppressionsYml | null;
   version?: string;
   presentSuppressionLines: string[];
   absentSuppressionLines: string[];
@@ -136,7 +141,7 @@ export const getIntegrationBranchName = (context: WorkflowContext, packageName: 
 };
 
 export const getPackageData = (context: WorkflowContext, result: PackageResult, suppressionContentList?: SDKSuppressionContentList): PackageData => {
-  const relativeFolderPath = result.path?.filter(p => p).find(p => p.split(path.sep).includes('sdk')) || '';
+  const relativeFolderPath = result.path?.filter(p => p).find(p => p.split(/[\\/]/).includes('sdk')) || '';
   if (!relativeFolderPath) {
     // Allow empty package for go sdk
     // throw new Error('Empty path array in package result');
@@ -218,6 +223,7 @@ export const getPackageData = (context: WorkflowContext, result: PackageResult, 
     apiViewArtifactPath: result.apiViewArtifact ?? undefined,
     changelogs: result.changelog?.content.split('\n') ?? [],
     breakingChangeItems,
+    sdkSuppressions: suppressionContent?.content,
     version: result.version,
     readmeMd: result.readmeMd,
     typespecProject: result.typespecProject,

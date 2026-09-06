@@ -27,5 +27,9 @@ namespace Azure.Sdk.Tools.Cli.Models.SdkBreakingChangeDetection
         /// </summary>
         [JsonPropertyName("changes")]
         public string? SdkChangeMD { get; set; } = null;
+
+        [JsonPropertyName("details")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public SdkChangeDetails? Details { get; set; }
     }
 }

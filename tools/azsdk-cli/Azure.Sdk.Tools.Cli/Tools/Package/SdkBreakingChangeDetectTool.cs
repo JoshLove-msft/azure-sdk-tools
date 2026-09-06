@@ -3,8 +3,6 @@
 
 using System.CommandLine;
 using System.ComponentModel;
-using System.Text.Json;
-using System.Text.Json.Serialization;
 using Azure.Sdk.Tools.Cli.Commands;
 using Azure.Sdk.Tools.Cli.Helpers;
 using Azure.Sdk.Tools.Cli.Models;
@@ -94,6 +92,8 @@ namespace Azure.Sdk.Tools.Cli.Tools.Package
             string? localSdkChangeJsonFilePath = null,
             CancellationToken ct = default)
         {
+            SdkChange? sdkChange = null;
+            PackageInfo? packageInfo = null;
             try
             {
                 logger.LogInformation("Parameters: packagePath={PackagePath}, tspConfigPath={TspConfigPath}, changesOnly={ChangesOnly}, localSdkChangeJsonFilePath={LocalSdkChangeJsonFilePath}",
@@ -116,8 +116,7 @@ namespace Azure.Sdk.Tools.Cli.Tools.Package
                 {
                     return PackageOperationResponse.CreateFailure($"Unable to find git repository root from the provided package path: {packagePath}. Please ensure the package path is within a valid git repository.");
                 }
-                var packageInfo = await languageService.GetPackageInfo(packagePath, ct);
-                SdkChange? sdkChange = null;
+                packageInfo = await languageService.GetPackageInfo(packagePath, ct);
                 if (!string.IsNullOrEmpty(localSdkChangeJsonFilePath) && !changesOnly)
                 {
                     logger.LogInformation("Using local SDK change JSON file at: {FilePath}", localSdkChangeJsonFilePath);
@@ -129,7 +128,7 @@ namespace Azure.Sdk.Tools.Cli.Tools.Package
                     else
                     {
                         // Read and deserialize the local SDK change JSON file
-                        sdkChange = await ReadSdkChangesFromFileAsync(localSdkChangeJsonFilePath, ct);
+                        sdkChange = await SdkChangeHelper.ReadFromFileAsync(localSdkChangeJsonFilePath, ct);
                     }
                 }
                 // If sdkChange is still null, attempt to retrieve it using the configured script
@@ -143,7 +142,10 @@ namespace Azure.Sdk.Tools.Cli.Tools.Package
                         logger.LogError("Failed to retrieve SDK changes using the configured script.");
                         return PackageOperationResponse.CreateFailure("Failed to retrieve SDK changes using the configured script.", packageInfo);
                     }
-                    
+                    if (!isSupported)
+                    {
+                        sdkChange = await languageService.GetSdkChangesAsync(packagePath, ct);
+                    }
                 }
 
                 if (sdkChange != null)
@@ -155,17 +157,14 @@ namespace Azure.Sdk.Tools.Cli.Tools.Package
                     }
                     else
                     {
-                        var result = new SdkBreakingChangeDetectionResult
-                        {
-                            HasBreakingChange = sdkChange.HasBreakingChange,
-                            BreakingChanges = [],
-                            SdkChangeMD = sdkChange.SdkChangeMD,
-                        };
-
                         return new PackageOperationResponse()
                         {
-                            Result = result,
-                            Message = sdkChange.HasBreakingChange ? "SDK changes detected. Breaking change classification skipped as per the 'changes-only' option." : "No SDK breaking changes detected.",
+                            Result = CreateUnclassifiedResult(sdkChange),
+                            Message = sdkChange.HasBreakingChange
+                                ? "SDK changes detected. Breaking change classification skipped as per the 'changes-only' option."
+                                : languageService.Language == SdkLanguage.DotNet && sdkChange.Details is { BaselineVersion: null }
+                                    ? "No GA baseline is available; compatibility was not evaluated."
+                                    : "No SDK breaking changes detected.",
                             Language = languageService.Language,
                             PackageName = packageInfo?.PackageName,
                         };
@@ -176,36 +175,28 @@ namespace Azure.Sdk.Tools.Cli.Tools.Package
                 logger.LogInformation("Running default logic to detect SDK breaking changes for the package...");
                 return await languageService.DetectSdkBreakingChangeAsync(packagePath, ct);
             }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
             catch (Exception ex)
             {
                 logger.LogError(ex, "An error occurred while detecting SDK breaking changes.");
-                return PackageOperationResponse.CreateFailure($"An error occurred while detecting SDK breaking changes: {ex.Message}", null);
+                var response = PackageOperationResponse.CreateFailure($"An error occurred while detecting SDK breaking changes: {ex.Message}", packageInfo);
+                if (sdkChange != null)
+                {
+                    response.Result = CreateUnclassifiedResult(sdkChange);
+                }
+                return response;
             }
         }
 
-        private async Task<SdkChange?> ReadSdkChangesFromFileAsync(string sdkChangeFilePath, CancellationToken ct)
+        private static SdkBreakingChangeDetectionResult CreateUnclassifiedResult(SdkChange sdkChange) => new()
         {
-            SdkChange? sdkChange = null;
-            try
-            {
-                // Read and deserialize the JSON file with proper disposal
-                await using (var fileStream = File.OpenRead(sdkChangeFilePath))
-                {
-                    sdkChange = await JsonSerializer.DeserializeAsync<SdkChange>(
-                        fileStream,
-                        cancellationToken: ct);
-                }
-            }
-            catch (JsonException jsonEx)
-            {
-                logger.LogError(jsonEx, "Failed to deserialize the SDK change script output.");
-            }
-            catch (Exception ex)
-            {
-                logger.LogError(ex, "An unexpected error occurred while reading and deserializing the SDK change script output.");
-            }
-            return sdkChange;
-        }
+            HasBreakingChange = sdkChange.HasBreakingChange,
+            SdkChangeMD = sdkChange.SdkChangeMD,
+            Details = sdkChange.Details,
+        };
 
         private async Task<(bool isSupported, SdkChange? sdkChange)> RetrieveSdkChangeFromScriptAsync(string sdkRepoRoot, string packagePath, PackageInfo packageInfo, LanguageService languageService, CancellationToken ct)
         {
@@ -234,24 +225,23 @@ namespace Azure.Sdk.Tools.Cli.Tools.Package
                 var processOptions = _specGenSdkConfigHelper.CreateProcessOptions(configContentType, configValue, sdkRepoRoot, packagePath, scriptParameters);
                 if (processOptions != null)
                 {
-                    var sdkChangeResponse = await _specGenSdkConfigHelper.ExecuteProcessAsync(processOptions, ct, packageInfo, "SDK changes are retrieved.");
-
-                    // Fixed condition: proceed when there are NO errors (Count == 0 or null)
-                    if (sdkChangeResponse != null && (sdkChangeResponse.ResponseErrors == null || sdkChangeResponse.ResponseErrors.Count == 0))
+                    try
                     {
+                        var sdkChangeResponse = await _specGenSdkConfigHelper.ExecuteProcessAsync(processOptions, ct, packageInfo, "SDK changes are retrieved.");
+                        ct.ThrowIfCancellationRequested();
+                        if (sdkChangeResponse == null || sdkChangeResponse.ExitCode != 0)
+                        {
+                            throw new InvalidOperationException($"Failed to retrieve SDK changes using the configured script: {sdkChangeResponse?.ResponseError}{Environment.NewLine}{string.Join(Environment.NewLine, sdkChangeResponse?.ResponseErrors ?? [])}");
+                        }
                         if (!File.Exists(sdkChangeFilePath))
                         {
-                            logger.LogError("SDK change file not found at: {FilePath}. Please check the script output for details.", sdkChangeFilePath);
+                            throw new FileNotFoundException("The SDK change script did not produce its output JSON file.", sdkChangeFilePath);
                         }
-                        else
-                        {
-                            sdkChange = await ReadSdkChangesFromFileAsync(sdkChangeFilePath, ct);
-                            File.Delete(sdkChangeFilePath);
-                        }
+                        sdkChange = await SdkChangeHelper.ReadFromFileAsync(sdkChangeFilePath, ct);
                     }
-                    else
+                    finally
                     {
-                        logger.LogError("Failed to retrieve SDK changes using the configured script. Errors: {Errors}", sdkChangeResponse?.ResponseErrors);
+                        File.Delete(sdkChangeFilePath);
                     }
                 }
                 else
@@ -283,19 +273,23 @@ namespace Azure.Sdk.Tools.Cli.Tools.Package
                 return new PackageOperationResponse
                 {
                     ResponseError = "Failed to classify SDK breaking changes.",
+                    Result = CreateUnclassifiedResult(sdkChange),
                     Language = languageService.Language,
                     PackageName = packageInfo?.PackageName,
                 };
             }
-            if (!sdkBreakingChangeResult.HasBreakingChange && sdkChange.HasBreakingChange)
+            if (!sdkBreakingChangeResult.HasBreakingChange || sdkBreakingChangeResult.BreakingChanges is not { Count: > 0 })
             {
                 return new PackageOperationResponse
                 {
                     ResponseError = "No SDK breaking changes were classified from the detected SDK changes.",
+                    Result = CreateUnclassifiedResult(sdkChange),
                     Language = languageService.Language,
                     PackageName = packageInfo?.PackageName,
                 };
             }
+            sdkBreakingChangeResult.SdkChangeMD = sdkChange.SdkChangeMD;
+            sdkBreakingChangeResult.Details = sdkChange.Details;
             return new PackageOperationResponse()
             {
                 Result = sdkBreakingChangeResult,

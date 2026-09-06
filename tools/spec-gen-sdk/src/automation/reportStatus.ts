@@ -19,10 +19,6 @@ export const generateReport = (context: WorkflowContext) => {
   const packageReports: PackageReport[] = [];
   const specConfigPath = (context.specConfigPath)?.replace(/\//g, '-');
 
-  let hasSuppressions = false
-  let hasAbsentSuppressions = false;
-  let areBreakingChangeSuppressed = false;
-  let shouldLabelBreakingChange = false;
   let markdownContent = '';
   let message = "";
   let isTypeSpec = false;
@@ -33,14 +29,10 @@ export const generateReport = (context: WorkflowContext) => {
   }
   for (const pkg of context.handledPackages) {
     setSdkAutoStatus(context, pkg.status);
-    hasSuppressions = Boolean(pkg.presentSuppressionLines.length > 0);
-    hasAbsentSuppressions = Boolean(pkg.absentSuppressionLines.length > 0);
-    if(pkg.hasBreakingChange && hasSuppressions && !hasAbsentSuppressions) {
-      areBreakingChangeSuppressed = true;
-    }
-    if(pkg.hasBreakingChange && !pkg.isBetaMgmtSdk && !pkg.isDataPlane && !areBreakingChangeSuppressed) {
-      shouldLabelBreakingChange = true;
-    }
+    const hasSuppressions = Boolean(pkg.presentSuppressionLines.length > 0);
+    const hasAbsentSuppressions = Boolean(pkg.absentSuppressionLines.length > 0);
+    const areBreakingChangeSuppressed = Boolean(pkg.hasBreakingChange && hasSuppressions && !hasAbsentSuppressions);
+    const shouldLabelBreakingChange = Boolean(pkg.hasBreakingChange && !pkg.isBetaMgmtSdk && !pkg.isDataPlane && !areBreakingChangeSuppressed);
     const packageReport: PackageReport = {
       serviceName: pkg.serviceName,
       packageName: pkg.name,
@@ -52,6 +44,8 @@ export const generateReport = (context: WorkflowContext) => {
       apiViewArtifact: pkg.apiViewArtifactPath,
       language: pkg.language,
       hasBreakingChange: pkg.hasBreakingChange,
+      ...(pkg.sdkChanges !== undefined ? { sdkChanges: pkg.sdkChanges } : {}),
+      ...(pkg.sdkChangesArtifactPath !== undefined ? { sdkChangesArtifactPath: pkg.sdkChangesArtifactPath } : {}),
       breakingChangeLabel: context.swaggerToSdkConfig.packageOptions.breakingChangesLabel,
       shouldLabelBreakingChange,
       areBreakingChangeSuppressed,
@@ -68,6 +62,9 @@ export const generateReport = (context: WorkflowContext) => {
     markdownContent += `## Is Beta Management SDK\n${pkg.isBetaMgmtSdk}\n`;
     markdownContent += `## Has Suppressions\n${hasSuppressions}\n`;
     markdownContent += `## Has Absent Suppressions\n${hasAbsentSuppressions}\n\n`;
+    if (pkg.sdkChanges !== undefined) {
+      markdownContent += `## SDK Changes\n${pkg.changelogs.join('\n')}\n\n`;
+    }
     isTypeSpec = pkg.typespecProject !== undefined;
     context.logger.info(
       `package [${pkg.name}] ` +

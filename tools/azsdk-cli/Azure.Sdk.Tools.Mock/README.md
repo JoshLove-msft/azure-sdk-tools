@@ -14,7 +14,7 @@ When a tool is called:
 - If a custom `IMockToolHandler` exists for that tool name → the handler produces the response
 - Otherwise → a default success response is returned:
   ```json
-  { "message": "Mock response for <tool_name>", "operation_status": "Succeeded" }
+  { "message": "Success" }
   ```
 
 The MCP client sees the exact same tool list and schemas as the real CLI — only the responses differ.
@@ -126,3 +126,74 @@ When you add or rename an MCP tool in `Azure.Sdk.Tools.Cli`, add a matching hand
 2. Create a new file under `Handlers/<Domain>/` (e.g., `Handlers/Pipeline/MyToolHandler.cs`).
 3. Implement `IMockToolHandler`. Set `ToolName` to the exact `[McpServerTool(Name = "…")]` value from the real tool.
 4. Return an instance of the same response type the real tool returns, populated with realistic sample data. For scenarios that need to exercise multiple branches, switch on `arguments` (see `HelloWorldHandler` above).
+
+## Breaking-Change Detector Fixtures
+
+`PackageDetectBreakingChangeHandler` supplies typed common responses for
+`azsdk_package_detect_breaking_change`. Its input schema still comes from the
+real CLI; the handler never runs a native SDK detector, reads a catalog, or calls
+an LLM classifier.
+
+| Package directory at the end of `packagePath` | Fixture |
+| --- | --- |
+| `Azure.ResourceManager.Contoso` | .NET management, classified manual mitigation |
+| `Azure.Contoso.Widget` | .NET data plane, classified manual mitigation |
+| `azure-resourcemanager-contoso` | Java management, legacy classification without mitigation enum |
+
+Default responses retain package metadata, removal and addition Markdown,
+classified breaks, and raw `details`. `changesOnly: true` returns the same raw
+evidence without classification. These are synthetic fixtures, not comparisons
+against files at the supplied path.
+
+Place one directory segment below before the package directory to select a
+scenario, for example `C:\mock-catalog-error\Azure.Contoso.Widget`:
+
+| Segment | Response |
+| --- | --- |
+| `mock-no-breaks` | Successful additive-only comparison |
+| `mock-no-baseline` | Compatibility not evaluated, with an explicit no-GA limitation |
+| `mock-missing-artifacts` / `mock-stale-artifacts` | Explicit failure, not a clean comparison |
+| `mock-classifier-error` / `mock-catalog-error` | Classification failure retaining raw changes/details; bypassed by `changesOnly: true` |
+
+Unknown packages and invalid/conflicting inputs fail explicitly. Classified
+`localSdkChangeJsonFilePath` replay reports that this mock capability is not
+implemented; the argument is ignored for `changesOnly`, as in production.
+`tspConfigPath` is accepted but not read by the fixtures.
+
+Other generation/build/check/test handlers remain canned successes.
+`azsdk_customized_code_update` is not a stateful or scope-aware SDK editor.
+These are mock coverage limits, not missing production detector or mitigation
+behavior.
+
+### Focused Offline Tests and Build
+
+From the repository root:
+
+```powershell
+dotnet test tools\azsdk-cli\Azure.Sdk.Tools.Mock\Tests\Azure.Sdk.Tools.Mock.Tests.csproj --nologo -p:CopilotSkipCliDownload=true
+dotnet build tools\azsdk-cli\Azure.Sdk.Tools.Mock -c Debug -o artifacts\mcp\mock --nologo -p:CopilotSkipCliDownload=true
+```
+
+The nested NUnit project uses the existing CLI test package versions and is
+excluded from the server's compile/content items. It verifies fixture contracts,
+raw/error evidence, metadata, JSON inputs, state isolation, and equality with the
+real reflected MCP schema. It is included in `Azure.Sdk.Tools.Cli.sln`, and the
+existing azsdk-cli CI test jobs run that solution, including these mock tests.
+
+`CopilotSkipCliDownload` is the SDK's supported build option for avoiding an
+unused native Copilot CLI download: this mock server does not execute the real
+CLI's agent. Vally's separate Copilot executor still requires its own runtime and
+model credential.
+
+After building the DLL above, the existing skill runner can target only the
+detector-backed cases from `.github\skills`:
+
+```powershell
+vally eval -e azsdk-common-sdk-breaking-change\evals\routing.eval.yaml `
+  --tag coverage=mock-detector --workers 1 --max-retries 0 --output jsonl `
+  --output-dir .\results\breaking-change-mock
+```
+
+Use the repository-pinned Vally setup and the `azsdk-mcp-mock` environment already
+declared by the eval. The existing CI runner uses `GITHUB_TOKEN` for model
+authentication; no live Azure SDK MCP or Azure authentication is needed.

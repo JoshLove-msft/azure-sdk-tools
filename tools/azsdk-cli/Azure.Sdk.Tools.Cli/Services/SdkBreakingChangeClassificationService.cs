@@ -5,6 +5,7 @@ using System.Linq;
 using System.Text.Json;
 using Azure.Sdk.Tools.Cli.CopilotAgents;
 using Azure.Sdk.Tools.Cli.CopilotAgents.Tools;
+using Azure.Sdk.Tools.Cli.Models;
 using Azure.Sdk.Tools.Cli.Models.SdkBreakingChangeDetection;
 using Azure.Sdk.Tools.Cli.Prompts.Templates;
 using Microsoft.Extensions.AI;
@@ -55,13 +56,27 @@ namespace Azure.Sdk.Tools.Cli.Services
                 _logger.LogDebug("Use SdkBreakingChangeClassificationTemplate version {Version}, Classification result: {Result}", template.Version, result);
                 try
                 {
-                    return JsonSerializer.Deserialize<SdkBreakingChangeDetectionResult>(result);
+                    var classification = JsonSerializer.Deserialize<SdkBreakingChangeDetectionResult>(result);
+                    if (SdkLanguageHelpers.GetSdkLanguage(language) == SdkLanguage.DotNet &&
+                        classification?.HasBreakingChange == true &&
+                        (classification.BreakingChanges is not { Count: > 0 } ||
+                         classification.BreakingChanges.Any(change =>
+                             change == null || change.Mitigation == null || !Enum.IsDefined(change.Mitigation.Value))))
+                    {
+                        _logger.LogError("The .NET classification did not provide a supported mitigation route for every breaking change.");
+                        return null;
+                    }
+                    return classification;
                 }
-                catch (Exception ex)
+                catch (Exception ex) when (ex is JsonException or ArgumentException)
                 {
                     _logger.LogError(ex, "Failed to deserialize classification result: {Result}, SdkBreakingChangeClassificationTemplate version: {Version}", result, template.Version);
                     return null;
                 }
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
             }
             catch (Exception ex)
             {
@@ -71,4 +86,3 @@ namespace Azure.Sdk.Tools.Cli.Services
         }
     }
 }
-

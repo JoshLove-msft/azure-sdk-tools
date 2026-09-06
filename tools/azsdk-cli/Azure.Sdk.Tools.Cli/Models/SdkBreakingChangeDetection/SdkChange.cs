@@ -23,5 +23,9 @@ namespace Azure.Sdk.Tools.Cli.Models.SdkBreakingChangeDetection
         [JsonPropertyName("hasBreakingChange")]
         [JsonRequired]
         public bool HasBreakingChange { get; set; }
+
+        [JsonPropertyName("details")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public SdkChangeDetails? Details { get; set; }
     }
 }

@@ -1,6 +1,7 @@
 import { SDKAutomationState } from '../automation/sdkAutomationState';
 import { requireJsonc } from '../utils/requireJsonc';
 import { getTypeTransformer } from './validator';
+import { SdkChanges } from './SdkChanges';
 
 export const executionReportSchema = requireJsonc(__dirname + '/ExecutionReportSchema.json');
 
@@ -28,6 +29,8 @@ export type PackageReport = {
   apiViewArtifact?: string;
   language?: string;
   hasBreakingChange?: boolean;
+  sdkChanges?: SdkChanges;
+  sdkChangesArtifactPath?: string;
   breakingChangeLabel?: string;
   shouldLabelBreakingChange: boolean;
   areBreakingChangeSuppressed?: boolean;

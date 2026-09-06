@@ -3,6 +3,7 @@
 using Azure.Sdk.Tools.Cli.Helpers;
 using Azure.Sdk.Tools.Cli.Models;
 using Azure.Sdk.Tools.Cli.Models.Responses.Package;
+using Azure.Sdk.Tools.Cli.Models.SdkBreakingChangeDetection;
 using Azure.Sdk.Tools.Cli.Services.Languages.Samples;
 
 namespace Azure.Sdk.Tools.Cli.Services.Languages
@@ -474,6 +475,15 @@ namespace Azure.Sdk.Tools.Cli.Services.Languages
                         "Update package metadata after the changelog content has been updated"
                         ],
                     result: "noop"));
+        }
+
+        /// <summary>
+        /// Retrieves SDK changes when the repository has no configured change detection script.
+        /// Returning null indicates that the language has no built-in detector.
+        /// </summary>
+        public virtual Task<SdkChange?> GetSdkChangesAsync(string packagePath, CancellationToken ct)
+        {
+            return Task.FromResult<SdkChange?>(null);
         }
 
         public virtual Task<PackageOperationResponse> DetectSdkBreakingChangeAsync(string packagePath, CancellationToken ct)

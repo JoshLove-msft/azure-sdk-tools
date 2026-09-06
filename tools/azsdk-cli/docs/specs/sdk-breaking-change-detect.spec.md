@@ -132,6 +132,12 @@ This design covers the complete SDK breaking change detection workflow for an SD
 **Prerequisite**:
 The SDK has been generated and built successfully.
 
+For .NET, compatibility detection consumes current, already-built assemblies
+without invoking source compilation or analyzer validation. These are separate
+results: a normal build/analyzer failure must not hide an available compatibility
+result, and missing or stale assemblies must be reported as a detector error
+rather than a clean comparison.
+
 A sdkChange-breakingchange pattern guide (e.g. https://github.com/Azure/azure-sdk-for-go/blob/main/documentation/development/breaking-changes/sdk-breaking-changes-guide.md) will service as the foundation to teach copilot agent to detect and classify SDK breaking changes for a SDK. The existing TypeSpec code and the configuration will help agent to classify the SDK breaking changes.
 
 **Output Format:**
@@ -237,7 +243,7 @@ Each language SDK already has a tool or script that generates sdk changes. We on
 | **Go** | Custom Go AST diff (`exports`/`delta`/`report` packages) | Go exported symbols | GitHub release tag ZIP | Generated code | both | No |
 | **Java (CI)** | `revapi-maven-plugin` | Java public API | Maven Central GA release | Locally built JAR | both | No |
 | **Java (Sdk automation)** | `japicmp` (JarArchiveComparator) | JAR bytecode | Maven Central JAR | Locally built JAR | both | No |
-| **.NET** | `Microsoft.DotNet.ApiCompat` MSBuild target | .NET assemblies | NuGet cached baseline DLL | Built DLL | both | only report breaking changes |
+| **.NET** | SDK-shipped `Microsoft.DotNet.ApiCompat.Task.ValidateAssembliesTask` | .NET assemblies | Latest GA NuGet package | Current built DLL | both | Forward violations plus reverse extraction of added types/members; behavioral changes and ambiguous mappings require review |
 | **JS/TS** | API Extractor + `git diff` | `.api.md` review files | Git baseline | Generated review files | both | No |
 | **Python** | `jsondiff` + AST/`inspect` introspection | JSON API reports | PyPI stable package | Current code | both | Need twick a litter for data-plane |
 
@@ -245,8 +251,89 @@ Each tool of language SDKs is suitable for both management-plane SDK and data-pl
 
 Limitation:
 
-- Net: Microsoft.DoNet.ApiCompat only report breaking changes, not all SDK changes.
+- .NET: ApiCompat remains the compatibility authority. Reverse `CP0001`/`CP0002`
+  diagnostics supplement additions because forward compatibility violations
+  alone do not describe the full change. Reverse results do not set
+  `hasBreakingChange`, and a removal/addition pair is not proof of a rename.
 - Python: the tool need to be twicked a litter for data-plane
+
+##### .NET integration
+
+The .NET SDK repository supplies the native detector and pattern catalog in
+`eng/swagger_to_sdk_config.json`:
+
+```json
+{
+  "packageOptions": {
+    "getSdkChangesScript": {
+      "path": "./eng/scripts/compatibility/Get-SdkChanges.ps1"
+    },
+    "sdkBreakingChangePatternFile": "doc/dev/SDKBreakingChanges.md"
+  }
+}
+```
+
+The script accepts `PackagePath`, `SdkRepoPath`, and `OutputJsonFile`, resolves the
+actual latest GA package (not merely the pinned `ApiCompatVersion`), and invokes
+ApiCompat independently of the normal build target. Existing rule settings,
+attribute exclusions, and approved centralized suppressions remain in effect.
+The detector never generates suppressions. Without explicit configuration,
+`DotnetLanguageService` uses these same repository entry points; it does not
+implement a competing compatibility checker.
+
+Native extraction requires current intermediate assemblies and matching
+portable/embedded PDBs for each evaluated target framework. The PowerShell host
+must support the selected SDK's MSBuild reader (.NET 10 SDK requires PowerShell
+7.6 or newer). `Configuration` must match the artifacts; SDK PR packaging uses
+`Release`. An inherited `TargetFramework` limits coverage and is disclosed in
+the report. Baseline restore honors the SDK repository's `NuGet.Config`.
+
+The existing `changes` and `hasBreakingChange` fields remain unchanged.
+.NET also returns optional `details` containing the baseline version, structured
+API changes, original diagnostics, and limitations:
+
+```json
+{
+  "changes": "### Breaking Changes\n- CP0002: Previous member signature removed\n\n### Features Added\n- New member signature",
+  "hasBreakingChange": true,
+  "details": {
+    "baselineVersion": "1.2.3",
+    "apiChanges": [
+      {
+        "kind": "removed",
+        "symbol": "Azure.Example.Widget.Get(string)",
+        "description": "Previous member signature removed",
+        "isBreaking": true,
+        "diagnosticId": "CP0002",
+        "targetFramework": "netstandard2.0"
+      }
+    ],
+    "diagnostics": ["Original ApiCompat diagnostic"],
+    "limitations": ["Confirm a possible signature transformation or rename before mitigation."]
+  }
+}
+```
+
+This original evidence is preserved in the common result after classification
+and on classification failure. A missing GA baseline is explicitly reported as
+not evaluated, not as a compatibility pass. Invalid reports, missing references,
+and failed native invocations remain errors.
+
+Classified .NET changes include `mitigation`: `generator`, `client customization`,
+or `manual`. Generator routing requires a verified deterministic pattern and
+uses the .NET repository's existing `mitigate-breaking-changes` skill. Client
+customizations use the current `azsdk_customized_code_update` tool (formerly
+`azsdk_typespec_customized_code_update`) with the approved edit scope. Unknown
+causes, ambiguous renames, and unsupported behavioral changes require manual
+judgment. Management-specific patterns must not be applied to data-plane SDKs.
+
+The shared `azsdk-common-sdk-breaking-change` skill uses the same contract for
+local development, spec PRs, and SDK PRs. Spec generation automation runs a
+configured detector separately from its build/changelog steps, preserves its
+report artifact, and propagates its breaking-change result through the existing
+reporting and suppression flow.
+
+##### Common input and output
 
 **Input**:
 SDK package

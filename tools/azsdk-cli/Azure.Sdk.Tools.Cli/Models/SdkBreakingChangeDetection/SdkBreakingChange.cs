@@ -31,6 +31,14 @@ namespace Azure.Sdk.Tools.Cli.Models.SdkBreakingChangeDetection
         public string? Resolution { get; set; }
 
         /// <summary>
+        /// The mitigation entry point, when supported by the language's pattern catalog.
+        /// Detection and classification never apply the mitigation themselves.
+        /// </summary>
+        [JsonPropertyName("mitigation")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public SdkBreakingChangeMitigation? Mitigation { get; set; }
+
+        /// <summary>
         /// The original breaking changes that this change is related to, if any.
         /// </summary>
         [JsonPropertyName("originBreaks")]

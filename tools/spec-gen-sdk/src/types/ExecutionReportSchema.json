@@ -74,6 +74,18 @@
           "hasBreakingChange": {
             "type": "boolean"
           },
+          "sdkChanges": {
+            "type": "object",
+            "properties": {
+              "changes": { "type": "string" },
+              "hasBreakingChange": { "type": "boolean" }
+            },
+            "required": ["changes", "hasBreakingChange"],
+            "additionalProperties": true
+          },
+          "sdkChangesArtifactPath": {
+            "type": "string"
+          },
           "breakingChangeLabel": {
             "type": "string"
           },
